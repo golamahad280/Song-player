@@ -6,6 +6,7 @@ import com.example.data.local.SongDao
 import com.example.model.Song
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
@@ -97,7 +98,19 @@ class LyricsService(
             Log.w(TAG, "lyrics.ovh query error: ${e.message}")
         }
 
-        // Step 5: AI Query Agent / Smart Generator for viral or popular songs
+        // Step 5: System A - Gemini Free API Search & Fetch Engine
+        try {
+            val geminiLyrics = fetchFromGeminiApi(cleanArtist, cleanTitle, song.durationMs)
+            if (geminiLyrics != null && !geminiLyrics.first.isNullOrBlank()) {
+                songDao.updateLyrics(song.id, geminiLyrics.first!!, geminiLyrics.second)
+                Log.d(TAG, "Found lyrics via Gemini API for '$cleanTitle'")
+                return@withContext geminiLyrics
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Gemini API query error: ${e.message}")
+        }
+
+        // Step 6: System B - AI Sync Marker & Local Cache Engine (Smart Generator)
         try {
             val aiSyncedLrc = generateSmartSongLyrics(cleanArtist, cleanTitle, song.durationMs)
             if (!aiSyncedLrc.isNullOrBlank()) {
@@ -110,6 +123,58 @@ class LyricsService(
         }
 
         return@withContext Pair(null, false)
+    }
+
+    private fun fetchFromGeminiApi(artist: String, title: String, durationMs: Long): Pair<String, Boolean>? {
+        val apiKey = try {
+            val field = com.example.BuildConfig::class.java.getField("GEMINI_API_KEY")
+            field.get(null) as? String ?: ""
+        } catch (e: Exception) {
+            ""
+        }
+        if (apiKey.isBlank() || apiKey == "YOUR_GEMINI_API_KEY") return null
+
+        try {
+            val prompt = "Provide complete official lyrics for the song \"$title\" by \"$artist\". Format them strictly as time-synced LRC format with [mm:ss.xx] timestamps for each line, matching song duration of ${durationMs / 1000} seconds. Output ONLY the LRC text."
+            val jsonBody = JSONObject().apply {
+                put("contents", JSONArray().put(JSONObject().put("parts", JSONArray().put(JSONObject().put("text", prompt)))))
+            }
+
+            val mediaType = "application/json; charset=utf-8".toMediaType()
+            val requestBody = okhttp3.RequestBody.create(mediaType, jsonBody.toString())
+
+            val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$apiKey"
+            val request = Request.Builder()
+                .url(url)
+                .post(requestBody)
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val body = response.body?.string()
+                    if (!body.isNullOrBlank()) {
+                        val json = JSONObject(body)
+                        val candidates = json.optJSONArray("candidates")
+                        if (candidates != null && candidates.length() > 0) {
+                            val content = candidates.getJSONObject(0).optJSONObject("content")
+                            val parts = content?.optJSONArray("parts")
+                            if (parts != null && parts.length() > 0) {
+                                val text = parts.getJSONObject(0).optString("text")
+                                if (text.isNotBlank()) {
+                                    val cleanedLrc = text.replace("```lrc", "").replace("```", "").trim()
+                                    val hasTimestamps = cleanedLrc.contains(Regex("\\[\\d{1,2}:\\d{2}"))
+                                    val finalLrc = if (hasTimestamps) cleanedLrc else generateAiTimedLrc(cleanedLrc, durationMs)
+                                    return Pair(finalLrc, true)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Gemini API fetch error: ${e.message}")
+        }
+        return null
     }
 
     /**

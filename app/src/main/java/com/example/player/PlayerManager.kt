@@ -441,9 +441,25 @@ class PlayerManager private constructor(private val context: Context) :
                 _sleepTimerRemainingSeconds.value = remaining
             }
             if (remaining <= 0) {
-                pause()
-                _sleepTimerRemainingSeconds.value = null
+                fadeAndStop()
             }
+        }
+    }
+
+    private fun fadeAndStop() {
+        scope.launch(Dispatchers.Main) {
+            try {
+                for (i in 10 downTo 0) {
+                    val vol = i / 10f
+                    mediaPlayer?.setVolume(vol, vol)
+                    delay(150)
+                }
+            } catch (_: Exception) {}
+            pause()
+            try {
+                mediaPlayer?.setVolume(1f, 1f)
+            } catch (_: Exception) {}
+            _sleepTimerRemainingSeconds.value = null
         }
     }
 
@@ -463,7 +479,7 @@ class PlayerManager private constructor(private val context: Context) :
     override fun onCompletion(mp: MediaPlayer?) {
         if (sleepTimerEndOfTrack) {
             cancelSleepTimer()
-            pause()
+            fadeAndStop()
             return
         }
 
