@@ -40,8 +40,10 @@ import com.example.ui.screens.SearchScreen
 import com.example.ui.theme.SongPlayerTheme
 import com.example.ui.theme.SpotifyBlack
 import com.example.viewmodel.SongPlayerViewModel
+import com.example.ui.components.AudioPermissionHandler
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
-import com.google.accompanist.permissions.rememberMultiplePermissionsState
+import com.google.accompanist.permissions.isGranted
+import com.google.accompanist.permissions.rememberPermissionState
 
 class MainActivity : ComponentActivity() {
 
@@ -54,21 +56,20 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             SongPlayerTheme {
-                // Request runtime media audio and notification permissions
-                val permissionsToRequest = buildList {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        add(Manifest.permission.READ_MEDIA_AUDIO)
-                        add(Manifest.permission.POST_NOTIFICATIONS)
-                    } else {
-                        add(Manifest.permission.READ_EXTERNAL_STORAGE)
+                // Robust permission handler with rationale dialog for READ_MEDIA_AUDIO before first-launch library scan
+                AudioPermissionHandler(
+                    onPermissionGranted = {
+                        viewModel.triggerFirstLaunchScanIfNeeded()
                     }
-                }
+                )
 
-                val permissionsState = rememberMultiplePermissionsState(permissions = permissionsToRequest)
-
-                LaunchedEffect(Unit) {
-                    if (!permissionsState.allPermissionsGranted) {
-                        permissionsState.launchMultiplePermissionRequest()
+                // Request notification permission on Android 13+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    val notificationPermissionState = rememberPermissionState(Manifest.permission.POST_NOTIFICATIONS)
+                    LaunchedEffect(Unit) {
+                        if (!notificationPermissionState.status.isGranted) {
+                            notificationPermissionState.launchPermissionRequest()
+                        }
                     }
                 }
 

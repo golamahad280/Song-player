@@ -167,7 +167,7 @@ class SongPlayerViewModel(application: Application) : AndroidViewModel(applicati
                         )
                     }
                 } else {
-                    scanAudioFiles()
+                    _songs.value = emptyList()
                 }
             }
         }
@@ -193,6 +193,15 @@ class SongPlayerViewModel(application: Application) : AndroidViewModel(applicati
                         songIds = "9001,9002,9004"
                     )
                 )
+            }
+        }
+    }
+
+    fun triggerFirstLaunchScanIfNeeded() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val count = songDao.getAllSongsList().size
+            if (count == 0 && !_isScanning.value) {
+                scanAudioFiles()
             }
         }
     }
