@@ -14,8 +14,10 @@ import com.example.model.Song
 import com.example.model.UserProfile
 import com.example.player.PlayerManager
 import com.example.player.RepeatMode
+import com.example.player.ShuffleMode
 import com.example.ui.components.NavDestination
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -50,6 +52,7 @@ class SongPlayerViewModel(application: Application) : AndroidViewModel(applicati
     val durationMs: StateFlow<Long> = playerManager.durationMs
     val queue: StateFlow<List<Song>> = playerManager.queue
     val isShuffle: StateFlow<Boolean> = playerManager.isShuffle
+    val shuffleMode: StateFlow<ShuffleMode> = playerManager.shuffleMode
     val repeatMode: StateFlow<RepeatMode> = playerManager.repeatMode
     val dominantColor: StateFlow<Long> = playerManager.dominantColor
     val sleepTimerRemainingSeconds: StateFlow<Int?> = playerManager.sleepTimerRemainingSeconds
@@ -210,6 +213,7 @@ class SongPlayerViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch(Dispatchers.IO) {
             _isScanning.value = true
             try {
+                val existingIds = songDao.getAllSongsList().map { it.id }.toSet()
                 val scanned = AudioScanner.scanLocalAudio(getApplication())
                 val entities = scanned.map { song ->
                     val existing = songDao.getSongById(song.id)
@@ -233,6 +237,22 @@ class SongPlayerViewModel(application: Application) : AndroidViewModel(applicati
                     )
                 }
                 songDao.insertOrUpdateSongs(entities)
+                val newCount = entities.count { it.id !in existingIds }
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(
+                        getApplication(),
+                        "Scanned successfully: $newCount new songs added!",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(
+                        getApplication(),
+                        "Scan failed: ${e.message}",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
             } finally {
                 _isScanning.value = false
             }

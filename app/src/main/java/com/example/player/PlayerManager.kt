@@ -31,6 +31,12 @@ enum class RepeatMode {
     ONE
 }
 
+enum class ShuffleMode {
+    OFF,
+    SHUFFLE,
+    SMART_SHUFFLE
+}
+
 class PlayerManager private constructor(private val context: Context) :
     MediaPlayer.OnCompletionListener,
     MediaPlayer.OnErrorListener,
@@ -75,8 +81,13 @@ class PlayerManager private constructor(private val context: Context) :
     private val _queue = MutableStateFlow<List<Song>>(emptyList())
     val queue: StateFlow<List<Song>> = _queue.asStateFlow()
 
+    private val _shuffleMode = MutableStateFlow(ShuffleMode.OFF)
+    val shuffleMode: StateFlow<ShuffleMode> = _shuffleMode.asStateFlow()
+
     private val _isShuffle = MutableStateFlow(false)
     val isShuffle: StateFlow<Boolean> = _isShuffle.asStateFlow()
+
+    private var originalQueueBeforeShuffle: List<Song> = emptyList()
 
     private val _repeatMode = MutableStateFlow(RepeatMode.ALL)
     val repeatMode: StateFlow<RepeatMode> = _repeatMode.asStateFlow()
@@ -295,7 +306,55 @@ class PlayerManager private constructor(private val context: Context) :
     }
 
     fun toggleShuffle() {
-        _isShuffle.value = !_isShuffle.value
+        _shuffleMode.value = when (_shuffleMode.value) {
+            ShuffleMode.OFF -> {
+                originalQueueBeforeShuffle = _queue.value
+                ShuffleMode.SHUFFLE
+            }
+            ShuffleMode.SHUFFLE -> ShuffleMode.SMART_SHUFFLE
+            ShuffleMode.SMART_SHUFFLE -> {
+                _queue.value = originalQueueBeforeShuffle
+                ShuffleMode.OFF
+            }
+        }
+        _isShuffle.value = (_shuffleMode.value != ShuffleMode.OFF)
+
+        if (_shuffleMode.value == ShuffleMode.SHUFFLE) {
+            applyRandomShuffle()
+        } else if (_shuffleMode.value == ShuffleMode.SMART_SHUFFLE) {
+            applySmartShuffle()
+        }
+    }
+
+    private fun applyRandomShuffle() {
+        val currentQueue = _queue.value
+        if (currentQueue.size <= 1) return
+        val current = _currentSong.value ?: currentQueue.first()
+        val shuffled = (currentQueue - current).shuffled() + current
+        _queue.value = shuffled
+    }
+
+    private fun applySmartShuffle() {
+        val currentQueue = _queue.value
+        if (currentQueue.size <= 1) return
+        val current = _currentSong.value ?: currentQueue.first()
+
+        // Smart Shuffle algorithm: score based on favorites, play counts, recency, and random variance
+        val scored = currentQueue.map { song ->
+            val favScore = if (song.isFavorite) 150.0 else 0.0
+            val playScore = (song.playCount * 5.0).coerceAtMost(60.0)
+            val recencyScore = ((song.dateAdded / 1000) % 100).toDouble() * 0.2
+            val randomVariance = Random.nextDouble() * 50.0
+            val totalScore = favScore + playScore + recencyScore + randomVariance
+            song to totalScore
+        }.sortedByDescending { it.second }.map { it.first }
+
+        val adjusted = if (current in scored) {
+            listOf(current) + (scored - current)
+        } else {
+            scored
+        }
+        _queue.value = adjusted
     }
 
     fun cycleRepeatMode() {
