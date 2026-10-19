@@ -47,6 +47,7 @@ class SongPlayerViewModel(application: Application) : AndroidViewModel(applicati
     val isShuffle: StateFlow<Boolean> = playerManager.isShuffle
     val repeatMode: StateFlow<RepeatMode> = playerManager.repeatMode
     val dominantColor: StateFlow<Long> = playerManager.dominantColor
+    val sleepTimerRemainingSeconds: StateFlow<Int?> = playerManager.sleepTimerRemainingSeconds
 
     // App Navigation & Sheet state
     private val _currentDestination = MutableStateFlow(NavDestination.HOME)
@@ -484,6 +485,63 @@ class SongPlayerViewModel(application: Application) : AndroidViewModel(applicati
                 }
             } finally {
                 _isFetchingLyrics.value = false
+            }
+        }
+    }
+
+    fun setSleepTimer(minutes: Int) {
+        playerManager.setSleepTimer(minutes)
+    }
+
+    fun setSleepTimerEndOfTrack() {
+        playerManager.setSleepTimerEndOfTrack()
+    }
+
+    fun cancelSleepTimer() {
+        playerManager.cancelSleepTimer()
+    }
+
+    fun importAudioFromUri(uri: android.net.Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                try {
+                    val takeFlags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    getApplication<Application>().contentResolver.takePersistableUriPermission(uri, takeFlags)
+                } catch (_: Exception) {}
+
+                val newSong = AudioScanner.parseUriMetadata(getApplication(), uri)
+                val entity = SongEntity(
+                    id = newSong.id,
+                    title = newSong.title,
+                    artist = newSong.artist,
+                    album = newSong.album,
+                    durationMs = newSong.durationMs,
+                    contentUri = newSong.contentUri,
+                    filePath = newSong.filePath,
+                    albumId = newSong.albumId,
+                    dateAdded = newSong.dateAdded,
+                    year = newSong.year,
+                    playCount = 0,
+                    isFavorite = false
+                )
+                songDao.insertOrUpdateSongs(listOf(entity))
+
+                val updatedList = listOf(newSong) + _songs.value.filter { it.id != newSong.id }
+                _songs.value = updatedList
+
+                // Automatically trigger lyrics & artwork background fetch
+                val (lyrics, isSynced) = fetcher.fetchLyricsForSong(newSong)
+                val artwork = fetcher.fetchArtworkForSong(newSong)
+                val enriched = newSong.copy(
+                    lyrics = lyrics,
+                    isSyncedLyrics = isSynced,
+                    customArtworkUrl = artwork
+                )
+                _songs.value = _songs.value.map { if (it.id == enriched.id) enriched else it }
+
+                playerManager.addToQueue(enriched)
+            } catch (e: Exception) {
+                android.util.Log.e("SongPlayerViewModel", "Error importing audio: ${e.message}")
             }
         }
     }

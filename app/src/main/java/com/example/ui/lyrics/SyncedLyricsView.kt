@@ -25,6 +25,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Refresh
@@ -72,7 +73,6 @@ import com.example.ui.theme.SpotifyGreen
 import com.example.ui.theme.SpotifyTextMuted
 import com.example.ui.theme.SpotifyTextPrimary
 import com.example.ui.theme.SpotifyTextSecondary
-import kotlinx.coroutines.launch
 
 @Composable
 fun SyncedLyricsView(
@@ -85,6 +85,13 @@ fun SyncedLyricsView(
     modifier: Modifier = Modifier
 ) {
     var showEditDialog by remember { mutableStateOf(false) }
+
+    // Auto-fetch lyrics as soon as the view is opened if lyrics are not already loaded or cached
+    LaunchedEffect(song?.id) {
+        if (song != null && song.lyrics.isNullOrBlank() && !isFetchingOnline) {
+            onFetchOnline()
+        }
+    }
 
     val parsedLines by remember(song?.lyrics) {
         derivedStateOf {
@@ -103,7 +110,6 @@ fun SyncedLyricsView(
     }
 
     val listState = rememberLazyListState()
-    val scope = rememberCoroutineScope()
 
     // Smoothly scroll active lyric into center of view
     LaunchedEffect(activeIndex) {
@@ -115,7 +121,7 @@ fun SyncedLyricsView(
 
     Box(modifier = modifier.fillMaxSize()) {
         if (parsedLines.isEmpty()) {
-            // Empty Lyrics State
+            // Empty / Loading Lyrics State
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -123,55 +129,76 @@ fun SyncedLyricsView(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
-                Icon(
-                    imageVector = Icons.Default.Sync,
-                    contentDescription = "No lyrics icon",
-                    tint = SpotifyTextMuted,
-                    modifier = Modifier.size(56.dp)
-                )
+                if (isFetchingOnline) {
+                    CircularProgressIndicator(
+                        color = SpotifyGreen,
+                        modifier = Modifier.size(52.dp),
+                        strokeWidth = 3.dp
+                    )
+                    Spacer(modifier = Modifier.height(20.dp))
+                    Text(
+                        text = "Finding Synced Lyrics...",
+                        color = SpotifyTextPrimary,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Querying LRCLIB, music databases & AI sync engine",
+                        color = SpotifyTextSecondary,
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.Sync,
+                        contentDescription = "No lyrics icon",
+                        tint = SpotifyTextMuted,
+                        modifier = Modifier.size(56.dp)
+                    )
 
-                Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
 
-                Text(
-                    text = "Looks like we don't have lyrics for this song yet",
-                    color = SpotifyTextSecondary,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Medium,
-                    textAlign = TextAlign.Center
-                )
+                    Text(
+                        text = "Syncing Lyrics for this track",
+                        color = SpotifyTextPrimary,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Once retrieved, lyrics are automatically cached for instant offline playback.",
+                        color = SpotifyTextSecondary,
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center
+                    )
 
-                Spacer(modifier = Modifier.height(24.dp))
+                    Spacer(modifier = Modifier.height(24.dp))
 
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Button(
-                        onClick = onFetchOnline,
-                        colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen),
-                        shape = RoundedCornerShape(24.dp),
-                        modifier = Modifier.testTag("fetch_lyrics_button")
-                    ) {
-                        if (isFetchingOnline) {
-                            CircularProgressIndicator(
-                                color = SpotifyBlack,
-                                modifier = Modifier.size(16.dp),
-                                strokeWidth = 2.dp
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                        } else {
-                            Icon(Icons.Default.Refresh, contentDescription = null, tint = SpotifyBlack)
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Button(
+                            onClick = onFetchOnline,
+                            colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen),
+                            shape = RoundedCornerShape(24.dp),
+                            modifier = Modifier.testTag("fetch_lyrics_button")
+                        ) {
+                            Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = SpotifyBlack)
                             Spacer(modifier = Modifier.width(6.dp))
+                            Text("Fetch & Sync", color = SpotifyBlack, fontWeight = FontWeight.Bold)
                         }
-                        Text("Search Online", color = SpotifyBlack, fontWeight = FontWeight.Bold)
-                    }
 
-                    OutlinedButton(
-                        onClick = { showEditDialog = true },
-                        shape = RoundedCornerShape(24.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = SpotifyTextPrimary),
-                        modifier = Modifier.testTag("edit_lyrics_empty_button")
-                    ) {
-                        Icon(Icons.Default.Edit, contentDescription = null, tint = SpotifyTextPrimary)
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Add Lyrics")
+                        OutlinedButton(
+                            onClick = { showEditDialog = true },
+                            shape = RoundedCornerShape(24.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = SpotifyTextPrimary),
+                            modifier = Modifier.testTag("edit_lyrics_empty_button")
+                        ) {
+                            Icon(Icons.Default.Edit, contentDescription = null, tint = SpotifyTextPrimary)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Edit Lyrics")
+                        }
                     }
                 }
             }
@@ -179,7 +206,7 @@ fun SyncedLyricsView(
             // Live Synced Lyrics Stream
             LazyColumn(
                 state = listState,
-                contentPadding = PaddingValues(top = 80.dp, bottom = 120.dp, start = 24.dp, end = 24.dp),
+                contentPadding = PaddingValues(top = 80.dp, bottom = 140.dp, start = 24.dp, end = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp),
                 modifier = Modifier.fillMaxSize().testTag("synced_lyrics_list")
             ) {
@@ -238,20 +265,22 @@ fun SyncedLyricsView(
             // Top action bar (Edit / Search Online)
             Row(
                 modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(16.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 12.dp)
+                    .align(Alignment.TopEnd),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(
                     onClick = onFetchOnline,
                     modifier = Modifier
                         .background(Color(0x66000000), CircleShape)
-                        .testTag("refresh_lyrics_button")
+                        .testTag("refresh_online_lyrics_button")
                 ) {
                     if (isFetchingOnline) {
                         CircularProgressIndicator(
                             color = SpotifyGreen,
-                            modifier = Modifier.size(18.dp),
+                            modifier = Modifier.size(20.dp),
                             strokeWidth = 2.dp
                         )
                     } else {
@@ -262,6 +291,8 @@ fun SyncedLyricsView(
                         )
                     }
                 }
+
+                Spacer(modifier = Modifier.width(8.dp))
 
                 IconButton(
                     onClick = { showEditDialog = true },

@@ -156,6 +156,66 @@ object AudioScanner {
         }
     }
 
+    /**
+     * Parses metadata from a manually imported audio URI (via system Storage Access Framework).
+     */
+    fun parseUriMetadata(context: Context, uri: Uri): Song {
+        val retriever = MediaMetadataRetriever()
+        var title: String? = null
+        var artist: String? = null
+        var album: String? = null
+        var durationMs: Long = 180000L
+        var year: Int? = null
+
+        // Try reading display name from ContentResolver
+        var displayName = "Imported Track"
+        try {
+            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (nameIndex != -1 && cursor.moveToFirst()) {
+                    displayName = cursor.getString(nameIndex) ?: displayName
+                }
+            }
+        } catch (_: Exception) {}
+
+        try {
+            retriever.setDataSource(context, uri)
+            title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
+            artist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
+            album = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
+            val dur = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+            if (dur != null) {
+                durationMs = dur.toLongOrNull() ?: 180000L
+            }
+            year = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_YEAR)?.toIntOrNull()
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not extract full metadata via retriever for $uri: ${e.message}")
+        } finally {
+            try {
+                retriever.release()
+            } catch (_: Exception) {}
+        }
+
+        val finalTitle = if (!title.isNullOrBlank()) cleanMetadata(title) else cleanMetadata(displayName)
+        val finalArtist = if (!artist.isNullOrBlank() && !artist.equals("<unknown>", ignoreCase = true)) cleanMetadata(artist) else "Unknown Artist"
+        val finalAlbum = if (!album.isNullOrBlank() && !album.equals("<unknown>", ignoreCase = true)) cleanMetadata(album) else "Imported Audio"
+
+        val generatedId = (uri.toString().hashCode().toLong() and 0x7FFFFFFF) + 100000L
+
+        return Song(
+            id = generatedId,
+            title = finalTitle,
+            artist = finalArtist,
+            album = finalAlbum,
+            durationMs = durationMs,
+            contentUri = uri.toString(),
+            filePath = uri.path ?: "",
+            albumId = 0L,
+            dateAdded = System.currentTimeMillis() / 1000,
+            year = year
+        )
+    }
+
     private fun cleanMetadata(text: String): String {
         return text.trim()
             .replace(Regex("\\.(mp3|flac|wav|aac|m4a|ogg)$", RegexOption.IGNORE_CASE), "")

@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -64,6 +65,7 @@ fun HomeScreen(
     onSongClick: (Song) -> Unit,
     onToggleFavorite: (Song) -> Unit,
     onAddToPlaylist: (Song) -> Unit,
+    onImportAudio: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val greeting = remember {
@@ -140,10 +142,29 @@ fun HomeScreen(
                     }
                 }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(
+                        onClick = onImportAudio,
+                        modifier = Modifier
+                            .size(36.dp)
+                            .testTag("home_import_audio_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.UploadFile,
+                            contentDescription = "Import Audio",
+                            tint = SpotifyGreen,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+
                     IconButton(
                         onClick = onOpenProfileManager,
-                        modifier = Modifier.size(36.dp).testTag("home_profile_switch_button")
+                        modifier = Modifier
+                            .size(36.dp)
+                            .testTag("home_profile_switch_button")
                     ) {
                         Icon(
                             Icons.Default.ElectricBolt,

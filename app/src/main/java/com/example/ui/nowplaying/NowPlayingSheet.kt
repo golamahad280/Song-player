@@ -34,9 +34,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
+import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.OpenInFull
@@ -110,6 +113,10 @@ fun NowPlayingSheet(
     onSaveLyrics: (String, Boolean) -> Unit,
     onFetchOnlineLyrics: () -> Unit,
     isFetchingLyrics: Boolean = false,
+    sleepTimerRemainingSeconds: Int? = null,
+    onSetSleepTimer: (Int) -> Unit = {},
+    onSetSleepTimerEndOfTrack: () -> Unit = {},
+    onCancelSleepTimer: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     if (song == null) return
@@ -117,6 +124,7 @@ fun NowPlayingSheet(
     BackHandler { onCollapse() }
 
     var isFullLyricsVisible by remember { mutableStateOf(false) }
+    var isSleepTimerDialogOpen by remember { mutableStateOf(false) }
     var isUserScrubbing by remember { mutableStateOf(false) }
     var scrubProgress by remember { mutableFloatStateOf(0f) }
 
@@ -197,16 +205,31 @@ fun NowPlayingSheet(
                     )
                 }
 
-                IconButton(
-                    onClick = onOpenQueue,
-                    modifier = Modifier.testTag("open_queue_top_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.QueueMusic,
-                        contentDescription = "Queue",
-                        tint = SpotifyTextPrimary,
-                        modifier = Modifier.size(24.dp)
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    val isTimerActive = sleepTimerRemainingSeconds != null
+                    IconButton(
+                        onClick = { isSleepTimerDialogOpen = true },
+                        modifier = Modifier.testTag("sleep_timer_top_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Bedtime,
+                            contentDescription = "Sleep Timer",
+                            tint = if (isTimerActive) SpotifyGreen else SpotifyTextPrimary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+
+                    IconButton(
+                        onClick = onOpenQueue,
+                        modifier = Modifier.testTag("open_queue_top_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.QueueMusic,
+                            contentDescription = "Queue",
+                            tint = SpotifyTextPrimary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
                 }
             }
 
@@ -544,6 +567,196 @@ fun NowPlayingSheet(
                         isFetchingOnline = isFetchingLyrics,
                         modifier = Modifier.weight(1f)
                     )
+                }
+            }
+        }
+
+        // Sleep Timer Selection Dialog
+        if (isSleepTimerDialogOpen) {
+            SleepTimerDialog(
+                remainingSeconds = sleepTimerRemainingSeconds,
+                onDismiss = { isSleepTimerDialogOpen = false },
+                onSelectDuration = { minutes ->
+                    onSetSleepTimer(minutes)
+                    isSleepTimerDialogOpen = false
+                },
+                onSelectEndOfTrack = {
+                    onSetSleepTimerEndOfTrack()
+                    isSleepTimerDialogOpen = false
+                },
+                onCancelTimer = {
+                    onCancelSleepTimer()
+                    isSleepTimerDialogOpen = false
+                }
+            )
+        }
+    }
+}
+
+@Composable
+fun SleepTimerDialog(
+    remainingSeconds: Int?,
+    onDismiss: () -> Unit,
+    onSelectDuration: (Int) -> Unit,
+    onSelectEndOfTrack: () -> Unit,
+    onCancelTimer: () -> Unit
+) {
+    val options = listOf(
+        Pair("5 minutes", 5),
+        Pair("10 minutes", 10),
+        Pair("15 minutes", 15),
+        Pair("30 minutes", 30),
+        Pair("45 minutes", 45),
+        Pair("1 hour", 60)
+    )
+
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        androidx.compose.material3.Surface(
+            modifier = Modifier
+                .fillMaxWidth(0.92f)
+                .clip(RoundedCornerShape(20.dp)),
+            color = SpotifyCardBackground,
+            tonalElevation = 8.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Bedtime,
+                            contentDescription = null,
+                            tint = SpotifyGreen,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = "Sleep Timer",
+                            color = SpotifyTextPrimary,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    IconButton(onClick = onDismiss) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close",
+                            tint = SpotifyTextSecondary
+                        )
+                    }
+                }
+
+                if (remainingSeconds != null) {
+                    val statusText = if (remainingSeconds == -1) {
+                        "Active: Pauses at end of current track"
+                    } else {
+                        val mins = remainingSeconds / 60
+                        val secs = remainingSeconds % 60
+                        "Active: %02d:%02d remaining".format(mins, secs)
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 10.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0x331ED760))
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Timer,
+                            contentDescription = null,
+                            tint = SpotifyGreen,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = statusText,
+                            color = SpotifyGreen,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                } else {
+                    Text(
+                        text = "Stop audio playback automatically when the timer expires.",
+                        color = SpotifyTextSecondary,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(vertical = 8.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    options.forEach { (label, minutes) ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { onSelectDuration(minutes) }
+                                .padding(horizontal = 12.dp, vertical = 10.dp)
+                                .testTag("sleep_timer_${minutes}m"),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = label,
+                                color = SpotifyTextPrimary,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+
+                    // End of track option
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onSelectEndOfTrack() }
+                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                            .testTag("sleep_timer_end_of_track"),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "End of track",
+                            color = SpotifyTextPrimary,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+
+                    // Turn off timer option (if currently running)
+                    if (remainingSeconds != null) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { onCancelTimer() }
+                                .padding(horizontal = 12.dp, vertical = 10.dp)
+                                .testTag("sleep_timer_turn_off"),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Turn off timer",
+                                color = Color(0xFFFF5252),
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
                 }
             }
         }

@@ -84,6 +84,13 @@ class PlayerManager private constructor(private val context: Context) :
     private val _dominantColor = MutableStateFlow(0xFF1E3264) // default Spotify deep blue/green
     val dominantColor: StateFlow<Long> = _dominantColor.asStateFlow()
 
+    // Sleep Timer
+    private val _sleepTimerRemainingSeconds = MutableStateFlow<Int?>(null)
+    val sleepTimerRemainingSeconds: StateFlow<Int?> = _sleepTimerRemainingSeconds.asStateFlow()
+
+    private var sleepTimerJob: Job? = null
+    private var sleepTimerEndOfTrack: Boolean = false
+
     init {
         initMediaPlayer()
     }
@@ -361,7 +368,46 @@ class PlayerManager private constructor(private val context: Context) :
         playbackProgressJob = null
     }
 
+    fun setSleepTimer(minutes: Int) {
+        cancelSleepTimer()
+        sleepTimerEndOfTrack = false
+        val totalSecs = minutes * 60
+        _sleepTimerRemainingSeconds.value = totalSecs
+
+        sleepTimerJob = scope.launch {
+            var remaining = totalSecs
+            while (isActive && remaining > 0) {
+                delay(1000)
+                remaining--
+                _sleepTimerRemainingSeconds.value = remaining
+            }
+            if (remaining <= 0) {
+                pause()
+                _sleepTimerRemainingSeconds.value = null
+            }
+        }
+    }
+
+    fun setSleepTimerEndOfTrack() {
+        cancelSleepTimer()
+        sleepTimerEndOfTrack = true
+        _sleepTimerRemainingSeconds.value = -1 // -1 signifies "End of track"
+    }
+
+    fun cancelSleepTimer() {
+        sleepTimerJob?.cancel()
+        sleepTimerJob = null
+        sleepTimerEndOfTrack = false
+        _sleepTimerRemainingSeconds.value = null
+    }
+
     override fun onCompletion(mp: MediaPlayer?) {
+        if (sleepTimerEndOfTrack) {
+            cancelSleepTimer()
+            pause()
+            return
+        }
+
         when (_repeatMode.value) {
             RepeatMode.ONE -> {
                 seekTo(0)

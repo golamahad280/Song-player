@@ -94,6 +94,7 @@ fun SongPlayerApp(viewModel: SongPlayerViewModel) {
     val isQueueExpanded by viewModel.isQueueExpanded.collectAsStateWithLifecycle()
     val isScanning by viewModel.isScanning.collectAsStateWithLifecycle()
     val isFetchingLyrics by viewModel.isFetchingLyrics.collectAsStateWithLifecycle()
+    val sleepTimerRemainingSeconds by viewModel.sleepTimerRemainingSeconds.collectAsStateWithLifecycle()
 
     // Profile & Playlist states
     val currentProfile by viewModel.currentProfile.collectAsStateWithLifecycle()
@@ -102,6 +103,13 @@ fun SongPlayerApp(viewModel: SongPlayerViewModel) {
     val isProfileManagerOpen by viewModel.isProfileManagerOpen.collectAsStateWithLifecycle()
     val selectedPlaylistForDetail by viewModel.selectedPlaylistForDetail.collectAsStateWithLifecycle()
     val songToAddToPlaylist by viewModel.songToAddToPlaylist.collectAsStateWithLifecycle()
+
+    // Native Storage Access Framework file picker launcher for manual audio import
+    val audioPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri: android.net.Uri? ->
+        uri?.let { viewModel.importAudioFromUri(it) }
+    }
 
     val progressFraction = if (durationMs > 0) currentPositionMs.toFloat() / durationMs.toFloat() else 0f
 
@@ -126,7 +134,8 @@ fun SongPlayerApp(viewModel: SongPlayerViewModel) {
                         onOpenProfileManager = { viewModel.openProfileManager() },
                         onSongClick = { song -> viewModel.playSong(song) },
                         onToggleFavorite = { song -> viewModel.toggleFavorite(song) },
-                        onAddToPlaylist = { song -> viewModel.showAddToPlaylistDialog(song) }
+                        onAddToPlaylist = { song -> viewModel.showAddToPlaylistDialog(song) },
+                        onImportAudio = { audioPickerLauncher.launch("audio/*") }
                     )
                 }
 
@@ -157,6 +166,7 @@ fun SongPlayerApp(viewModel: SongPlayerViewModel) {
                         onOpenPlaylistDetail = { playlist -> viewModel.openPlaylistDetail(playlist) },
                         onCreatePlaylist = { name -> viewModel.createPlaylist(name) },
                         onAddToPlaylist = { song -> viewModel.showAddToPlaylistDialog(song) },
+                        onImportAudio = { audioPickerLauncher.launch("audio/*") },
                         isScanning = isScanning
                     )
                 }
@@ -217,7 +227,11 @@ fun SongPlayerApp(viewModel: SongPlayerViewModel) {
                     currentSong?.let { viewModel.saveLyrics(it.id, lyricsText, isSynced) }
                 },
                 onFetchOnlineLyrics = { viewModel.fetchOnlineLyricsForCurrentSong() },
-                isFetchingLyrics = isFetchingLyrics
+                isFetchingLyrics = isFetchingLyrics,
+                sleepTimerRemainingSeconds = sleepTimerRemainingSeconds,
+                onSetSleepTimer = { mins -> viewModel.setSleepTimer(mins) },
+                onSetSleepTimerEndOfTrack = { viewModel.setSleepTimerEndOfTrack() },
+                onCancelSleepTimer = { viewModel.cancelSleepTimer() }
             )
         }
 

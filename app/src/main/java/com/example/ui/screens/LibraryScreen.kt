@@ -26,17 +26,20 @@ import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.Sort
+import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -93,6 +96,7 @@ fun LibraryScreen(
     onOpenPlaylistDetail: (Playlist) -> Unit,
     onCreatePlaylist: (String) -> Unit,
     onAddToPlaylist: (Song) -> Unit,
+    onImportAudio: () -> Unit = {},
     isScanning: Boolean = false,
     modifier: Modifier = Modifier
 ) {
@@ -119,13 +123,33 @@ fun LibraryScreen(
         }
     }
 
-    LazyColumn(
+    Scaffold(
         modifier = modifier
             .fillMaxSize()
-            .background(SpotifyBlack)
             .testTag("library_screen"),
-        contentPadding = PaddingValues(top = 16.dp, bottom = 120.dp)
-    ) {
+        containerColor = SpotifyBlack,
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = onImportAudio,
+                containerColor = SpotifyGreen,
+                contentColor = SpotifyBlack,
+                modifier = Modifier.testTag("floating_import_audio_fab")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = "Import Audio",
+                    tint = SpotifyBlack,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+        }
+    ) { innerPadding ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding),
+            contentPadding = PaddingValues(bottom = 120.dp)
+        ) {
         // Library Top Header with Profile Avatar
         item {
             Row(
@@ -175,15 +199,75 @@ fun LibraryScreen(
                     }
                 }
 
-                // Rescan device storage button
-                IconButton(
-                    onClick = onRescanStorage,
-                    modifier = Modifier.testTag("rescan_storage_button")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Import Audio button
+                    IconButton(
+                        onClick = onImportAudio,
+                        modifier = Modifier.testTag("import_audio_top_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.UploadFile,
+                            contentDescription = "Import Audio File",
+                            tint = SpotifyGreen
+                        )
+                    }
+
+                    // Rescan device storage button
+                    IconButton(
+                        onClick = onRescanStorage,
+                        modifier = Modifier.testTag("rescan_storage_button")
+                    ) {
+                        Icon(
+                            Icons.Default.Refresh,
+                            contentDescription = "Rescan Local Audio",
+                            tint = SpotifyTextPrimary
+                        )
+                    }
+                }
+            }
+        }
+
+        // Quick Import Audio Banner
+        item {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0x1F1ED760))
+                    .clickable { onImportAudio() }
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                    .testTag("import_audio_banner_button"),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(SpotifyGreen),
+                    contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        Icons.Default.Refresh,
-                        contentDescription = "Rescan Local Audio",
-                        tint = SpotifyTextPrimary
+                        imageVector = Icons.Default.Add,
+                        contentDescription = null,
+                        tint = SpotifyBlack,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(12.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Add Song / Import Audio",
+                        color = SpotifyTextPrimary,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Select .mp3, .flac, .wav, or .m4a from phone storage",
+                        color = SpotifyTextSecondary,
+                        fontSize = 12.sp
                     )
                 }
             }
@@ -466,6 +550,8 @@ fun LibraryScreen(
                     )
                 }
             }
+        }
+
         }
     }
 
