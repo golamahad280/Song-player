@@ -1,0 +1,6 @@
+{
+  "name": "Song Player",
+  "description": "Premium Spotify-inspired local audio player with dynamic gradients, background playback, and AI-powered synced lyrics and artwork fetching.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

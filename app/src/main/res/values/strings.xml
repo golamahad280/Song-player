@@ -1,0 +1,14 @@
+<resources>
+    <string name="app_name">Song Player</string>
+    <string name="nav_home">Home</string>
+    <string name="nav_search">Search</string>
+    <string name="nav_library">Your Library</string>
+    <string name="play">Play</string>
+    <string name="pause">Pause</string>
+    <string name="next">Next</string>
+    <string name="previous">Previous</string>
+    <string name="queue">Queue</string>
+    <string name="lyrics">Lyrics</string>
+    <string name="playback_channel_name">Song Player Playback</string>
+    <string name="playback_channel_desc">Playback controls and media notification</string>
+</resources>
