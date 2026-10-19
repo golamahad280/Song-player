@@ -104,11 +104,15 @@ fun SongPlayerApp(viewModel: SongPlayerViewModel) {
     val selectedPlaylistForDetail by viewModel.selectedPlaylistForDetail.collectAsStateWithLifecycle()
     val songToAddToPlaylist by viewModel.songToAddToPlaylist.collectAsStateWithLifecycle()
 
-    // Native Storage Access Framework file picker launcher for manual audio import
+    val importProgress by viewModel.importProgress.collectAsStateWithLifecycle()
+
+    // Native Storage Access Framework file picker launcher for multi-file audio import (200+ songs at once)
     val audioPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
-    ) { uri: android.net.Uri? ->
-        uri?.let { viewModel.importAudioFromUri(it) }
+        contract = androidx.activity.result.contract.ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris: List<android.net.Uri> ->
+        if (uris.isNotEmpty()) {
+            viewModel.importAudioFromUris(uris)
+        }
     }
 
     val progressFraction = if (durationMs > 0) currentPositionMs.toFloat() / durationMs.toFloat() else 0f
@@ -135,7 +139,7 @@ fun SongPlayerApp(viewModel: SongPlayerViewModel) {
                         onSongClick = { song -> viewModel.playSong(song) },
                         onToggleFavorite = { song -> viewModel.toggleFavorite(song) },
                         onAddToPlaylist = { song -> viewModel.showAddToPlaylistDialog(song) },
-                        onImportAudio = { audioPickerLauncher.launch("audio/*") }
+                        onImportAudio = { audioPickerLauncher.launch(arrayOf("audio/*")) }
                     )
                 }
 
@@ -166,8 +170,9 @@ fun SongPlayerApp(viewModel: SongPlayerViewModel) {
                         onOpenPlaylistDetail = { playlist -> viewModel.openPlaylistDetail(playlist) },
                         onCreatePlaylist = { name -> viewModel.createPlaylist(name) },
                         onAddToPlaylist = { song -> viewModel.showAddToPlaylistDialog(song) },
-                        onImportAudio = { audioPickerLauncher.launch("audio/*") },
-                        isScanning = isScanning
+                        onImportAudio = { audioPickerLauncher.launch(arrayOf("audio/*")) },
+                        isScanning = isScanning,
+                        importProgress = importProgress
                     )
                 }
             }
@@ -299,7 +304,6 @@ fun SongPlayerApp(viewModel: SongPlayerViewModel) {
                 },
                 onCreatePlaylistAndAdd = { name, songId ->
                     viewModel.createPlaylist(name)
-                    // Retrieve newly created or add to it
                     viewModel.playlists.value.firstOrNull { it.name == name }?.let {
                         viewModel.addSongToPlaylist(it.id, songId)
                     }

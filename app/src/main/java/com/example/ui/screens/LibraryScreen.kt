@@ -98,6 +98,7 @@ fun LibraryScreen(
     onAddToPlaylist: (Song) -> Unit,
     onImportAudio: () -> Unit = {},
     isScanning: Boolean = false,
+    importProgress: Pair<Int, Int>? = null,
     modifier: Modifier = Modifier
 ) {
     var selectedSort by remember { mutableStateOf(SortOption.NEWEST) }
@@ -150,6 +151,43 @@ fun LibraryScreen(
                 .padding(innerPadding),
             contentPadding = PaddingValues(bottom = 120.dp)
         ) {
+        // Batch Import Progress Banner
+        if (importProgress != null) {
+            item {
+                val (current, total) = importProgress!!
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    color = SpotifyCardBackground,
+                    shape = RoundedCornerShape(12.dp),
+                    shadowElevation = 4.dp
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "Importing $current of $total songs...",
+                            color = SpotifyTextPrimary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        androidx.compose.material3.LinearProgressIndicator(
+                            progress = { if (total > 0) current.toFloat() / total.toFloat() else 0f },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(3.dp)),
+                            color = SpotifyGreen,
+                            trackColor = SpotifyDivider
+                        )
+                    }
+                }
+            }
+        }
+
         // Library Top Header with Profile Avatar
         item {
             Row(

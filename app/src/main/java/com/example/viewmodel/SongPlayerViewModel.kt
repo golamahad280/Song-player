@@ -28,6 +28,11 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.UUID
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
+import com.example.service.StorageScanWorker
+import java.util.concurrent.TimeUnit
 
 class SongPlayerViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -78,6 +83,9 @@ class SongPlayerViewModel(application: Application) : AndroidViewModel(applicati
     private val _isFetchingLyrics = MutableStateFlow(false)
     val isFetchingLyrics: StateFlow<Boolean> = _isFetchingLyrics.asStateFlow()
 
+    private val _importProgress = MutableStateFlow<Pair<Int, Int>?>(null)
+    val importProgress: StateFlow<Pair<Int, Int>?> = _importProgress.asStateFlow()
+
     // Profiles state
     val profiles: StateFlow<List<UserProfile>> = userProfileDao.getAllProfiles()
         .map { entities ->
@@ -124,6 +132,16 @@ class SongPlayerViewModel(application: Application) : AndroidViewModel(applicati
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     init {
+        // Schedule periodic automatic storage scan every 6 hours
+        try {
+            val periodicWork = PeriodicWorkRequestBuilder<StorageScanWorker>(6, TimeUnit.HOURS).build()
+            WorkManager.getInstance(application).enqueueUniquePeriodicWork(
+                "StorageScanPeriodicWork",
+                ExistingPeriodicWorkPolicy.KEEP,
+                periodicWork
+            )
+        } catch (_: Exception) {}
+
         // Observe Room DB songs
         viewModelScope.launch {
             songDao.getAllSongs().collectLatest { entities ->
@@ -502,47 +520,62 @@ class SongPlayerViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun importAudioFromUri(uri: android.net.Uri) {
+        importAudioFromUris(listOf(uri))
+    }
+
+    fun importAudioFromUris(uris: List<android.net.Uri>) {
         viewModelScope.launch(Dispatchers.IO) {
-            try {
+            val total = uris.size
+            _importProgress.value = Pair(0, total)
+            val newSongs = mutableListOf<Song>()
+            val entities = mutableListOf<SongEntity>()
+
+            for ((index, uri) in uris.withIndex()) {
                 try {
-                    val takeFlags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
-                    getApplication<Application>().contentResolver.takePersistableUriPermission(uri, takeFlags)
-                } catch (_: Exception) {}
+                    try {
+                        val takeFlags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        getApplication<Application>().contentResolver.takePersistableUriPermission(uri, takeFlags)
+                    } catch (_: Exception) {}
 
-                val newSong = AudioScanner.parseUriMetadata(getApplication(), uri)
-                val entity = SongEntity(
-                    id = newSong.id,
-                    title = newSong.title,
-                    artist = newSong.artist,
-                    album = newSong.album,
-                    durationMs = newSong.durationMs,
-                    contentUri = newSong.contentUri,
-                    filePath = newSong.filePath,
-                    albumId = newSong.albumId,
-                    dateAdded = newSong.dateAdded,
-                    year = newSong.year,
-                    playCount = 0,
-                    isFavorite = false
-                )
-                songDao.insertOrUpdateSongs(listOf(entity))
+                    val newSong = AudioScanner.parseUriMetadata(getApplication(), uri)
+                    val existing = songDao.getSongById(newSong.id)
+                    val entity = SongEntity(
+                        id = newSong.id,
+                        title = newSong.title,
+                        artist = newSong.artist,
+                        album = newSong.album,
+                        durationMs = newSong.durationMs,
+                        contentUri = newSong.contentUri,
+                        filePath = newSong.filePath,
+                        albumId = newSong.albumId,
+                        dateAdded = newSong.dateAdded,
+                        year = newSong.year,
+                        playCount = existing?.playCount ?: 0,
+                        isFavorite = existing?.isFavorite ?: false,
+                        lyrics = existing?.lyrics,
+                        isSyncedLyrics = existing?.isSyncedLyrics ?: false,
+                        customArtworkUrl = existing?.customArtworkUrl
+                    )
+                    entities.add(entity)
+                    newSongs.add(newSong)
+                } catch (e: Exception) {
+                    android.util.Log.e("SongPlayerViewModel", "Error importing uri $uri: ${e.message}")
+                }
+                _importProgress.value = Pair(index + 1, total)
+            }
 
-                val updatedList = listOf(newSong) + _songs.value.filter { it.id != newSong.id }
+            if (entities.isNotEmpty()) {
+                songDao.insertOrUpdateSongs(entities)
+                val updatedList = newSongs + _songs.value.filter { existingSong -> !newSongs.any { it.id == existingSong.id } }
                 _songs.value = updatedList
 
-                // Automatically trigger lyrics & artwork background fetch
-                val (lyrics, isSynced) = fetcher.fetchLyricsForSong(newSong)
-                val artwork = fetcher.fetchArtworkForSong(newSong)
-                val enriched = newSong.copy(
-                    lyrics = lyrics,
-                    isSyncedLyrics = isSynced,
-                    customArtworkUrl = artwork
-                )
-                _songs.value = _songs.value.map { if (it.id == enriched.id) enriched else it }
-
-                playerManager.addToQueue(enriched)
-            } catch (e: Exception) {
-                android.util.Log.e("SongPlayerViewModel", "Error importing audio: ${e.message}")
+                if (newSongs.isNotEmpty()) {
+                    playerManager.addToQueue(newSongs.first())
+                }
             }
+
+            kotlinx.coroutines.delay(1000)
+            _importProgress.value = null
         }
     }
 }
