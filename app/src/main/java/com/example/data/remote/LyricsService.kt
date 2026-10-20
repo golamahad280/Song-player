@@ -594,7 +594,7 @@ class LyricsService(
                                 val first = results.getJSONObject(0)
                                 val rawUrl = first.optString("artworkUrl100")
                                 if (rawUrl.isNotBlank()) {
-                                    return rawUrl.replace("100x100bb", "600x600bb")
+                                    return rawUrl.replace("100x100bb", "1000x1000bb")
                                 }
                             }
                         }
@@ -666,7 +666,7 @@ class LyricsService(
                         val first = results.getJSONObject(0)
                         val rawUrl = first.optString("artworkUrl100")
                         if (rawUrl.isNotBlank()) {
-                            return rawUrl.replace("100x100bb", "600x600bb")
+                            return rawUrl.replace("100x100bb", "1000x1000bb")
                         }
                     }
                 }
