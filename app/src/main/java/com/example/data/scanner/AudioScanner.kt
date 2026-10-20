@@ -97,7 +97,7 @@ object AudioScanner {
         try {
             val musicDir = context.getExternalFilesDir(null)
             if (musicDir != null && musicDir.exists()) {
-                scanDirectoryRecursively(musicDir, songsList)
+                scanDirectoryRecursively(context, musicDir, songsList)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error scanning external files dir: ${e.message}", e)
@@ -111,21 +111,21 @@ object AudioScanner {
         return songsList
     }
 
-    private fun scanDirectoryRecursively(dir: File, outList: MutableList<Song>) {
+    private fun scanDirectoryRecursively(context: Context, dir: File, outList: MutableList<Song>) {
         val files = dir.listFiles() ?: return
         for (file in files) {
             if (file.isDirectory) {
-                scanDirectoryRecursively(file, outList)
+                scanDirectoryRecursively(context, file, outList)
             } else {
                 val ext = file.extension.lowercase()
                 if (ext in SUPPORTED_EXTENSIONS && !outList.any { it.filePath == file.absolutePath }) {
-                    extractFileMetadata(file)?.let { outList.add(it) }
+                    extractFileMetadata(context, file)?.let { outList.add(it) }
                 }
             }
         }
     }
 
-    private fun extractFileMetadata(file: File): Song? {
+    private fun extractFileMetadata(context: Context, file: File): Song? {
         val retriever = MediaMetadataRetriever()
         return try {
             retriever.setDataSource(file.absolutePath)
@@ -135,9 +135,23 @@ object AudioScanner {
             val durationStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
             val duration = durationStr?.toLongOrNull() ?: 180000L
             val dateAdded = file.lastModified() / 1000
+            val songId = file.hashCode().toLong()
+
+            var customArtworkUrl: String? = null
+            var dominantColor: Long? = null
+            val picture = retriever.embeddedPicture
+            if (picture != null && picture.isNotEmpty()) {
+                try {
+                    val artDir = File(context.filesDir, "artwork").apply { mkdirs() }
+                    val artFile = File(artDir, "art_$songId.jpg")
+                    artFile.writeBytes(picture)
+                    customArtworkUrl = "file://${artFile.absolutePath}"
+                    dominantColor = extractDominantColor(picture)
+                } catch (_: Exception) {}
+            }
 
             Song(
-                id = file.hashCode().toLong(),
+                id = songId,
                 title = title,
                 artist = artist,
                 album = album,
@@ -145,7 +159,9 @@ object AudioScanner {
                 contentUri = Uri.fromFile(file).toString(),
                 filePath = file.absolutePath,
                 albumId = 0L,
-                dateAdded = dateAdded
+                dateAdded = dateAdded,
+                customArtworkUrl = customArtworkUrl,
+                dominantColor = dominantColor
             )
         } catch (e: Exception) {
             null
@@ -178,6 +194,10 @@ object AudioScanner {
             }
         } catch (_: Exception) {}
 
+        val generatedId = (uri.toString().hashCode().toLong() and 0x7FFFFFFF) + 100000L
+        var customArtworkUrl: String? = null
+        var dominantColor: Long? = null
+
         try {
             retriever.setDataSource(context, uri)
             title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
@@ -188,6 +208,17 @@ object AudioScanner {
                 durationMs = dur.toLongOrNull() ?: 180000L
             }
             year = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_YEAR)?.toIntOrNull()
+
+            val picture = retriever.embeddedPicture
+            if (picture != null && picture.isNotEmpty()) {
+                try {
+                    val artDir = File(context.filesDir, "artwork").apply { mkdirs() }
+                    val artFile = File(artDir, "art_$generatedId.jpg")
+                    artFile.writeBytes(picture)
+                    customArtworkUrl = "file://${artFile.absolutePath}"
+                    dominantColor = extractDominantColor(picture)
+                } catch (_: Exception) {}
+            }
         } catch (e: Exception) {
             Log.w(TAG, "Could not extract full metadata via retriever for $uri: ${e.message}")
         } finally {
@@ -200,8 +231,6 @@ object AudioScanner {
         val finalArtist = if (!artist.isNullOrBlank() && !artist.equals("<unknown>", ignoreCase = true)) cleanMetadata(artist) else "Unknown Artist"
         val finalAlbum = if (!album.isNullOrBlank() && !album.equals("<unknown>", ignoreCase = true)) cleanMetadata(album) else "Imported Audio"
 
-        val generatedId = (uri.toString().hashCode().toLong() and 0x7FFFFFFF) + 100000L
-
         return Song(
             id = generatedId,
             title = finalTitle,
@@ -212,8 +241,72 @@ object AudioScanner {
             filePath = uri.path ?: "",
             albumId = 0L,
             dateAdded = System.currentTimeMillis() / 1000,
-            year = year
+            year = year,
+            customArtworkUrl = customArtworkUrl,
+            dominantColor = dominantColor
         )
+    }
+
+    fun extractDominantColor(pictureBytes: ByteArray): Long {
+        return try {
+            val options = android.graphics.BitmapFactory.Options().apply { inSampleSize = 8 }
+            val bitmap = android.graphics.BitmapFactory.decodeByteArray(pictureBytes, 0, pictureBytes.size, options)
+                ?: return 0xFF1DB954L
+            extractDominantColorFromBitmap(bitmap)
+        } catch (_: Exception) {
+            0xFF1DB954L
+        }
+    }
+
+    private fun extractDominantColorFromBitmap(bitmap: android.graphics.Bitmap): Long {
+        return try {
+            var totalR = 0L
+            var totalG = 0L
+            var totalB = 0L
+            var count = 0
+            val width = bitmap.width
+            val height = bitmap.height
+            val stepX = (width / 16).coerceAtLeast(1)
+            val stepY = (height / 16).coerceAtLeast(1)
+
+            var maxSat = -1f
+            var vibrantColor = 0xFF1DB954L
+            val hsv = FloatArray(3)
+
+            for (x in 0 until width step stepX) {
+                for (y in 0 until height step stepY) {
+                    val pixel = bitmap.getPixel(x, y)
+                    val r = (pixel shr 16) and 0xFF
+                    val g = (pixel shr 8) and 0xFF
+                    val b = pixel and 0xFF
+                    android.graphics.Color.colorToHSV(pixel, hsv)
+                    val sat = hsv[1]
+                    val value = hsv[2]
+
+                    if (sat > 0.25f && value > 0.2f && value < 0.95f) {
+                        if (sat > maxSat) {
+                            maxSat = sat
+                            vibrantColor = 0xFF000000L or ((r.toLong() and 0xFF) shl 16) or ((g.toLong() and 0xFF) shl 8) or (b.toLong() and 0xFF)
+                        }
+                    }
+                    totalR += r
+                    totalG += g
+                    totalB += b
+                    count++
+                }
+            }
+            if (maxSat > 0.25f) vibrantColor
+            else if (count > 0) {
+                val avgR = (totalR / count).coerceIn(30, 220)
+                val avgG = (totalG / count).coerceIn(30, 220)
+                val avgB = (totalB / count).coerceIn(30, 220)
+                0xFF000000L or (avgR shl 16) or (avgG shl 8) or avgB
+            } else {
+                0xFF1DB954L
+            }
+        } catch (_: Exception) {
+            0xFF1DB954L
+        }
     }
 
     private fun cleanMetadata(text: String): String {

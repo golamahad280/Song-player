@@ -159,13 +159,30 @@ class PlayerManager private constructor(private val context: Context) :
             // Auto-fetch high-res artwork if missing
             if (song.customArtworkUrl.isNullOrBlank()) {
                 val fetchedArt = fetcher.fetchArtworkForSong(song)
-                if (!fetchedArt.isNullOrBlank()) {
-                    val updatedSong = (_currentSong.value ?: song).copy(customArtworkUrl = fetchedArt)
+                val refreshed = database.songDao().getSongById(song.id)
+                if (!fetchedArt.isNullOrBlank() || refreshed?.dominantColor != null) {
+                    val updatedSong = (_currentSong.value ?: song).copy(
+                        customArtworkUrl = fetchedArt ?: refreshed?.customArtworkUrl,
+                        dominantColor = refreshed?.dominantColor ?: (_currentSong.value ?: song).dominantColor
+                    )
                     if (_currentSong.value?.id == song.id) {
                         _currentSong.value = updatedSong
+                        refreshed?.dominantColor?.let { _dominantColor.value = it }
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * Updates the lyrics of a song in the current playback and queue without interrupting or restarting playback.
+     */
+    fun updateCurrentSongLyrics(songId: Long, lyrics: String, isSynced: Boolean) {
+        if (_currentSong.value?.id == songId) {
+            _currentSong.value = _currentSong.value?.copy(lyrics = lyrics, isSyncedLyrics = isSynced)
+        }
+        _queue.value = _queue.value.map {
+            if (it.id == songId) it.copy(lyrics = lyrics, isSyncedLyrics = isSynced) else it
         }
     }
 

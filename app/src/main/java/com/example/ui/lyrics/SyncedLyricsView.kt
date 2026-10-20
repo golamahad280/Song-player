@@ -104,7 +104,7 @@ fun SyncedLyricsView(
             if (parsedLines.isEmpty()) -1
             else {
                 val idx = parsedLines.indexOfLast { it.timeMs <= currentPositionMs }
-                if (idx == -1) 0 else idx
+                if (idx == -1) -1 else idx
             }
         }
     }
@@ -314,10 +314,16 @@ fun SyncedLyricsView(
     if (showEditDialog) {
         LyricsEditorDialog(
             initialLyrics = song?.lyrics ?: "",
+            durationMs = song?.durationMs ?: 180000L,
             onDismiss = { showEditDialog = false },
             onSave = { updatedText ->
                 val hasTimestamps = updatedText.contains(Regex("\\[\\d{1,2}:\\d{2}"))
-                onSaveLyrics(updatedText, hasTimestamps)
+                val finalLyrics = if (hasTimestamps) {
+                    updatedText
+                } else {
+                    LyricsParser.generateTimedLrc(updatedText, song?.durationMs ?: 180000L)
+                }
+                onSaveLyrics(finalLyrics, true)
                 showEditDialog = false
             }
         )
@@ -327,6 +333,7 @@ fun SyncedLyricsView(
 @Composable
 fun LyricsEditorDialog(
     initialLyrics: String,
+    durationMs: Long,
     onDismiss: () -> Unit,
     onSave: (String) -> Unit
 ) {
@@ -368,7 +375,7 @@ fun LyricsEditorDialog(
                 }
 
                 Text(
-                    text = "Paste or edit timestamped LRC (e.g. [01:23.45] Lyric line) or plain text lyrics. Saved directly to offline database.",
+                    text = "Paste or edit timestamped LRC (e.g. [01:23.45] Lyric line) or plain text lyrics. Auto-sync generates real-time timestamps.",
                     color = SpotifyTextMuted,
                     fontSize = 12.sp,
                     modifier = Modifier.padding(vertical = 8.dp)
@@ -403,28 +410,46 @@ fun LyricsEditorDialog(
                 // Bottom actions
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // Auto-sync timestamps button for plain text
                     OutlinedButton(
-                        onClick = onDismiss,
+                        onClick = {
+                            if (text.isNotBlank()) {
+                                text = LyricsParser.generateTimedLrc(text, durationMs)
+                            }
+                        },
                         shape = RoundedCornerShape(24.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = SpotifyTextSecondary)
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = SpotifyGreen),
+                        modifier = Modifier.testTag("auto_sync_lyrics_button")
                     ) {
-                        Text("Cancel")
+                        Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = SpotifyGreen, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Auto-Sync", color = SpotifyGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
 
-                    Spacer(modifier = Modifier.width(12.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            shape = RoundedCornerShape(24.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = SpotifyTextSecondary)
+                        ) {
+                            Text("Cancel")
+                        }
 
-                    Button(
-                        onClick = { onSave(text) },
-                        shape = RoundedCornerShape(24.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen),
-                        modifier = Modifier.testTag("save_lyrics_button")
-                    ) {
-                        Icon(Icons.Default.Save, contentDescription = null, tint = SpotifyBlack)
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Save Lyrics", color = SpotifyBlack, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.width(10.dp))
+
+                        Button(
+                            onClick = { onSave(text) },
+                            shape = RoundedCornerShape(24.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen),
+                            modifier = Modifier.testTag("save_lyrics_button")
+                        ) {
+                            Icon(Icons.Default.Save, contentDescription = null, tint = SpotifyBlack)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Save Lyrics", color = SpotifyBlack, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }

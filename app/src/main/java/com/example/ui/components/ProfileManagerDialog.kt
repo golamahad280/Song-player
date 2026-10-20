@@ -105,15 +105,16 @@ fun ProfileManagerDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.Person,
-                            contentDescription = null,
-                            tint = SpotifyGreen,
-                            modifier = Modifier.size(24.dp)
+                        androidx.compose.foundation.Image(
+                            painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.ic_sp_logo),
+                            contentDescription = "Song Player SP Logo",
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(CircleShape)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(10.dp))
                         Text(
-                            text = if (isCreatingNew) "Create Profile" else "Switch Profiles",
+                            text = if (isCreatingNew) "Create Profile" else "Song Player Profiles",
                             color = SpotifyTextPrimary,
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold

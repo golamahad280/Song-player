@@ -71,6 +71,33 @@ object LyricsParser {
         return parsed.sortedBy { it.timeMs }
     }
 
+    /**
+     * Converts plain lyrics text into a precisely timestamped [mm:ss.xx] .lrc format
+     * distributed evenly across the song's playback duration.
+     */
+    fun generateTimedLrc(plainLyrics: String, durationMs: Long): String {
+        val rawLines = plainLyrics.lines()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !it.startsWith("Paroles de la chanson") && !it.contains("lyrics submitted by", ignoreCase = true) }
+
+        if (rawLines.isEmpty()) return plainLyrics
+
+        val totalMs = if (durationMs > 10000L) durationMs else 180000L
+        val startOffset = 6000L // 6s musical intro
+        val availableTime = (totalMs - startOffset - 6000L).coerceAtLeast(12000L)
+        val step = (availableTime / rawLines.size).coerceIn(1800L, 6500L)
+
+        val sb = StringBuilder()
+        rawLines.forEachIndexed { index, line ->
+            val timestamp = startOffset + (index * step)
+            val minutes = (timestamp / 1000) / 60
+            val seconds = (timestamp / 1000) % 60
+            val fraction = (timestamp % 1000) / 10
+            sb.append("[%02d:%02d.%02d] %s\n".format(minutes, seconds, fraction, line))
+        }
+        return sb.toString().trim()
+    }
+
     fun formatTime(timeMs: Long): String {
         val totalSec = (timeMs / 1000).coerceAtLeast(0)
         val minutes = totalSec / 60

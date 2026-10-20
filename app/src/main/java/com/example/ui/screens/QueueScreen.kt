@@ -40,8 +40,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
 import com.example.model.Song
+import com.example.ui.components.SpotifyCoverArt
 import com.example.ui.theme.SpotifyBlack
 import com.example.ui.theme.SpotifyCardBackground
 import com.example.ui.theme.SpotifyElevated
@@ -118,24 +118,15 @@ fun QueueScreen(
                             .padding(12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(SpotifyElevated),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (!currentSong.customArtworkUrl.isNullOrBlank()) {
-                                AsyncImage(
-                                    model = currentSong.customArtworkUrl,
-                                    contentDescription = currentSong.title,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.size(48.dp)
-                                )
-                            } else {
-                                Icon(Icons.Default.MusicNote, contentDescription = null, tint = SpotifyTextMuted)
-                            }
-                        }
+                        SpotifyCoverArt(
+                            artworkUrl = currentSong.customArtworkUrl,
+                            title = currentSong.title,
+                            artist = currentSong.artist,
+                            dominantColorHex = currentSong.dominantColor,
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.size(48.dp),
+                            initialsSize = 13.sp
+                        )
 
                         Spacer(modifier = Modifier.width(12.dp))
 
@@ -204,24 +195,15 @@ fun QueueScreen(
                             modifier = Modifier.width(28.dp)
                         )
 
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(SpotifyElevated),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (!song.customArtworkUrl.isNullOrBlank()) {
-                                AsyncImage(
-                                    model = song.customArtworkUrl,
-                                    contentDescription = song.title,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.size(40.dp)
-                                )
-                            } else {
-                                Icon(Icons.Default.MusicNote, contentDescription = null, tint = SpotifyTextMuted)
-                            }
-                        }
+                        SpotifyCoverArt(
+                            artworkUrl = song.customArtworkUrl,
+                            title = song.title,
+                            artist = song.artist,
+                            dominantColorHex = song.dominantColor,
+                            shape = RoundedCornerShape(4.dp),
+                            modifier = Modifier.size(40.dp),
+                            initialsSize = 11.sp
+                        )
 
                         Spacer(modifier = Modifier.width(10.dp))
 

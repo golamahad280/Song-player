@@ -9,6 +9,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
@@ -43,14 +44,14 @@ class LyricsService(
      * Returns Pair<LyricsText?, IsSynced>.
      */
     suspend fun fetchLyricsForSong(song: Song): Pair<String?, Boolean> = withContext(Dispatchers.IO) {
-        // Step 1: Check Room DB offline cache
+        // Step 1: Check Room DB offline cache (instant zero-latency retrieval)
         val cached = songDao.getSongById(song.id)
         if (!cached?.lyrics.isNullOrBlank()) {
-            Log.d(TAG, "Loaded lyrics from offline cache for '${song.title}'")
+            Log.d(TAG, "Loaded lyrics from offline Room cache for '${song.title}'")
             return@withContext Pair(cached?.lyrics, cached?.isSyncedLyrics ?: true)
         }
 
-        // If song already has memory-loaded lyrics, save to cache and return
+        // If song already has memory-loaded lyrics, save to Room DB cache and return
         if (!song.lyrics.isNullOrBlank()) {
             songDao.updateLyrics(song.id, song.lyrics, song.isSyncedLyrics)
             return@withContext Pair(song.lyrics, song.isSyncedLyrics)
@@ -59,58 +60,78 @@ class LyricsService(
         val cleanTitle = normalizeTrackTitle(song.title)
         val cleanArtist = normalizeArtistName(song.artist)
 
-        Log.d(TAG, "Starting multi-fallback lyrics fetch for: '$cleanTitle' by '$cleanArtist'")
+        Log.d(TAG, "Starting lyrics search for: '$cleanTitle' by '$cleanArtist'")
 
-        // Step 2: Primary Source - LRCLIB API with cleaned title + artist
+        var fallbackPlainLyrics: String? = null
+
+        // STAGE 1: PRIMARY SYNCED API (LRCLIB DIRECT LRC ENGINE)
         try {
             val primaryLyrics = fetchFromLrcLib(cleanArtist, cleanTitle, song.durationMs)
             if (primaryLyrics != null && !primaryLyrics.first.isNullOrBlank()) {
-                songDao.updateLyrics(song.id, primaryLyrics.first!!, primaryLyrics.second)
-                Log.d(TAG, "Found lyrics via LRCLIB primary for '$cleanTitle'")
-                return@withContext primaryLyrics
+                if (primaryLyrics.second) {
+                    // Exact synced LRC returned
+                    songDao.updateLyrics(song.id, primaryLyrics.first!!, true)
+                    Log.d(TAG, "Found synced LRC lyrics via LRCLIB primary for '$cleanTitle'")
+                    return@withContext primaryLyrics
+                } else {
+                    fallbackPlainLyrics = primaryLyrics.first
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "LRCLIB primary fetch error: ${e.message}")
         }
 
-        // Step 3: Secondary Source - LRCLIB title-only fuzzy search
-        try {
-            val titleOnlyLyrics = fetchFromLrcLib("", cleanTitle, song.durationMs)
-            if (titleOnlyLyrics != null && !titleOnlyLyrics.first.isNullOrBlank()) {
-                songDao.updateLyrics(song.id, titleOnlyLyrics.first!!, titleOnlyLyrics.second)
-                Log.d(TAG, "Found lyrics via LRCLIB title query for '$cleanTitle'")
-                return@withContext titleOnlyLyrics
+        // Title-only LRCLIB search if artist + title had no match
+        if (fallbackPlainLyrics.isNullOrBlank()) {
+            try {
+                val titleOnlyLyrics = fetchFromLrcLib("", cleanTitle, song.durationMs)
+                if (titleOnlyLyrics != null && !titleOnlyLyrics.first.isNullOrBlank()) {
+                    if (titleOnlyLyrics.second) {
+                        songDao.updateLyrics(song.id, titleOnlyLyrics.first!!, true)
+                        Log.d(TAG, "Found synced LRC lyrics via LRCLIB title search for '$cleanTitle'")
+                        return@withContext titleOnlyLyrics
+                    } else {
+                        fallbackPlainLyrics = titleOnlyLyrics.first
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "LRCLIB title query error: ${e.message}")
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "LRCLIB title query error: ${e.message}")
         }
 
-        // Step 4: Tertiary Source - Fallback API (lyrics.ovh) converted to timed LRC
-        try {
-            val plainLyrics = fetchFromLyricsOvh(cleanArtist, cleanTitle)
-            if (!plainLyrics.isNullOrBlank()) {
-                val syncedLrc = generateAiTimedLrc(plainLyrics, song.durationMs)
-                songDao.updateLyrics(song.id, syncedLrc, true)
-                Log.d(TAG, "Converted plain lyrics from lyrics.ovh to timed LRC for '$cleanTitle'")
-                return@withContext Pair(syncedLrc, true)
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "lyrics.ovh query error: ${e.message}")
-        }
-
-        // Step 5: System A - Gemini Free API Search & Fetch Engine
+        // STAGE 2: FALLBACK GEMINI API ENGINE (Structured [mm:ss.xx] prompt)
         try {
             val geminiLyrics = fetchFromGeminiApi(cleanArtist, cleanTitle, song.durationMs)
             if (geminiLyrics != null && !geminiLyrics.first.isNullOrBlank()) {
                 songDao.updateLyrics(song.id, geminiLyrics.first!!, geminiLyrics.second)
-                Log.d(TAG, "Found lyrics via Gemini API for '$cleanTitle'")
+                Log.d(TAG, "Generated synced LRC lyrics via Gemini API for '$cleanTitle'")
                 return@withContext geminiLyrics
             }
         } catch (e: Exception) {
             Log.w(TAG, "Gemini API query error: ${e.message}")
         }
 
-        // Step 6: System B - AI Sync Marker & Local Cache Engine (Smart Generator)
+        // STAGE 3: Secondary Web Plain Lyrics (lyrics.ovh) converted to timed LRC
+        if (fallbackPlainLyrics.isNullOrBlank()) {
+            try {
+                val ovhLyrics = fetchFromLyricsOvh(cleanArtist, cleanTitle)
+                if (!ovhLyrics.isNullOrBlank()) {
+                    fallbackPlainLyrics = ovhLyrics
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "lyrics.ovh query error: ${e.message}")
+            }
+        }
+
+        // If we found plain text from LRCLIB or lyrics.ovh, align with heuristic timestamps
+        if (!fallbackPlainLyrics.isNullOrBlank()) {
+            val syncedLrc = generateAiTimedLrc(fallbackPlainLyrics, song.durationMs)
+            songDao.updateLyrics(song.id, syncedLrc, true)
+            Log.d(TAG, "Converted plain lyrics to timed LRC for '$cleanTitle'")
+            return@withContext Pair(syncedLrc, true)
+        }
+
+        // STAGE 4: AI Contextual Accompaniment Engine (Safety Net)
         try {
             val aiSyncedLrc = generateSmartSongLyrics(cleanArtist, cleanTitle, song.durationMs)
             if (!aiSyncedLrc.isNullOrBlank()) {
@@ -135,13 +156,14 @@ class LyricsService(
         if (apiKey.isBlank() || apiKey == "YOUR_GEMINI_API_KEY") return null
 
         try {
-            val prompt = "Provide complete official lyrics for the song \"$title\" by \"$artist\". Format them strictly as time-synced LRC format with [mm:ss.xx] timestamps for each line, matching song duration of ${durationMs / 1000} seconds. Output ONLY the LRC text."
+            val durationSec = (durationMs / 1000).coerceAtLeast(1)
+            val prompt = "You are an expert music lyrics parser. Return the complete, official lyrics for the song \"$title\" by \"$artist\". Strictly output in timestamped LRC format [mm:ss.xx] distributed proportionally across the track duration of $durationSec seconds. Output ONLY the timestamped LRC text without any markdown or conversational commentary."
             val jsonBody = JSONObject().apply {
                 put("contents", JSONArray().put(JSONObject().put("parts", JSONArray().put(JSONObject().put("text", prompt)))))
             }
 
             val mediaType = "application/json; charset=utf-8".toMediaType()
-            val requestBody = okhttp3.RequestBody.create(mediaType, jsonBody.toString())
+            val requestBody = jsonBody.toString().toRequestBody(mediaType)
 
             val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$apiKey"
             val request = Request.Builder()
@@ -183,13 +205,18 @@ class LyricsService(
     private fun fetchFromLrcLib(artist: String, title: String, durationMs: Long): Pair<String, Boolean>? {
         if (title.isBlank()) return null
 
+        val durationSec = (durationMs / 1000).toInt()
+
         // Try exact get endpoint if both artist and title are available
         if (artist.isNotBlank() && artist != "Unknown Artist") {
             try {
                 val encodedTrack = URLEncoder.encode(title.trim(), "UTF-8")
                 val encodedArtist = URLEncoder.encode(artist.trim(), "UTF-8")
-                val durationSec = (durationMs / 1000).toInt()
-                val getUrl = "https://lrclib.net/api/get?track_name=$encodedTrack&artist_name=$encodedArtist&duration=$durationSec"
+                val getUrl = if (durationSec > 0) {
+                    "https://lrclib.net/api/get?track_name=$encodedTrack&artist_name=$encodedArtist&duration=$durationSec"
+                } else {
+                    "https://lrclib.net/api/get?track_name=$encodedTrack&artist_name=$encodedArtist"
+                }
 
                 val request = Request.Builder()
                     .url(getUrl)
@@ -206,7 +233,7 @@ class LyricsService(
                             if (syncedLyrics.isNotBlank()) {
                                 return Pair(syncedLyrics, true)
                             } else if (plainLyrics.isNotBlank()) {
-                                return Pair(generateAiTimedLrc(plainLyrics, durationMs), true)
+                                return Pair(plainLyrics, false)
                             }
                         }
                     }
@@ -232,7 +259,7 @@ class LyricsService(
                 if (!body.isNullOrBlank()) {
                     val array = JSONArray(body)
                     if (array.length() > 0) {
-                        // First pass: look for time-synced lyrics
+                        // First pass: look for exact time-synced lyrics
                         for (i in 0 until array.length()) {
                             val item = array.getJSONObject(i)
                             val syncedLyrics = item.optString("syncedLyrics")
@@ -240,12 +267,12 @@ class LyricsService(
                                 return Pair(syncedLyrics, true)
                             }
                         }
-                        // Second pass: plain text lyrics converted to timed LRC
+                        // Second pass: plain text lyrics
                         for (i in 0 until array.length()) {
                             val item = array.getJSONObject(i)
                             val plainLyrics = item.optString("plainLyrics")
                             if (plainLyrics.isNotBlank()) {
-                                return Pair(generateAiTimedLrc(plainLyrics, durationMs), true)
+                                return Pair(plainLyrics, false)
                             }
                         }
                     }
@@ -286,26 +313,7 @@ class LyricsService(
      * aligned to song playback duration.
      */
     fun generateAiTimedLrc(plainLyrics: String, durationMs: Long): String {
-        val rawLines = plainLyrics.lines()
-            .map { it.trim() }
-            .filter { it.isNotEmpty() && !it.startsWith("Paroles de la chanson") && !it.contains("lyrics submitted by", ignoreCase = true) }
-
-        if (rawLines.isEmpty()) return plainLyrics
-
-        val totalMs = if (durationMs > 10000L) durationMs else 180000L
-        val startOffset = 6000L // 6 seconds intro
-        val availableTime = (totalMs - startOffset - 6000L).coerceAtLeast(12000L)
-        val step = (availableTime / rawLines.size).coerceIn(1800L, 6500L)
-
-        val sb = StringBuilder()
-        rawLines.forEachIndexed { index, line ->
-            val timestamp = startOffset + (index * step)
-            val minutes = (timestamp / 1000) / 60
-            val seconds = (timestamp / 1000) % 60
-            val fraction = (timestamp % 1000) / 10
-            sb.append("[%02d:%02d.%02d] %s\n".format(minutes, seconds, fraction, line))
-        }
-        return sb.toString().trim()
+        return com.example.model.LyricsParser.generateTimedLrc(plainLyrics, durationMs)
     }
 
     /**
@@ -337,10 +345,13 @@ class LyricsService(
     }
 
     /**
-     * Cleans titles by removing file extensions, video markers, remaster tags, and extra junk.
+     * Cleans titles by removing file extensions, video markers, remaster tags, and dirty terms.
+     * Conforms to Section 1 Metadata Cleaning Pipeline while strictly preserving Bengali (\u0980-\u09FF),
+     * Devanagari (\u0900-\u097F), and regional Unicode scripts.
      */
     fun normalizeTrackTitle(raw: String): String {
-        var text = raw.replace(Regex("(?i)\\.(mp3|flac|wav|aac|m4a|ogg)$"), "")
+        var text = raw.replace(Regex("(?i)\\.(mp3|flac|wav|aac|m4a|ogg|opus|wma)$"), "")
+        text = text.replace('_', ' ')
 
         // Handle "Artist - Title" format in file names
         if (text.contains(" - ")) {
@@ -350,29 +361,79 @@ class LyricsService(
             }
         }
 
-        return text
-            .replace(Regex("(?i)\\[.*?\\]"), "")
-            .replace(Regex("(?i)\\((?:official|video|audio|lyrics?|lyric video|music video|hd|4k|remastered|remaster|remix|clean|explicit|version|feat|ft).*?\\)"), "")
-            .replace(Regex("(?i)\\b(official|video|audio|lyrics?|remastered|remix|hd|4k|hq)\\b"), "")
-            .replace(Regex("(?i)\\b(feat\\.|ft\\.|featuring)\\b.*"), "")
+        val dirtyPatterns = listOf(
+            Regex("(?i)\\b\\d{2,3}\\s*kbps\\b"),
+            // English video & audio markers
+            Regex("(?i)\\[.*?(?:official|video|audio|lyrics?|lyric video|music video|hd|4k|1080p|720p|remastered|remaster|remix|8d audio|8d|download|cover|audio).*?\\]"),
+            Regex("(?i)\\((?:official|video|audio|lyrics?|lyric video|music video|hd|4k|1080p|720p|remastered|remaster|remix|8d audio|8d|download|cover|audio|clean|explicit|version).*?\\)"),
+            Regex("(?i)\\b(official\\s*video|official\\s*audio|music\\s*video|lyric\\s*video|lyrics?\\s*video|official)\\b"),
+            Regex("(?i)\\b(hd|4k|hq|1080p|720p)\\b"),
+            Regex("(?i)\\b(8d\\s*audio|8d|audio\\s*video|download|full\\s*song|full\\s*audio)\\b"),
+            Regex("(?i)\\b(remastered|remaster|remix|cover)\\b"),
+            Regex("(?i)\\b(feat\\.|ft\\.|featuring)\\b.*"),
+            // Regional Bangla video & audio tags
+            Regex("\\[.*?(?:ভিডিও|অফিশিয়াল|গান|লিরিক্স|অডিও).*?\\]"),
+            Regex("\\((?:ভিডিও|অফিশিয়াল|গান|লিরিক্স|অডিও|লিরিক্যাল|ফুল ভিডিও).*?\\)"),
+            // Regional Hindi / Devanagari video & audio tags
+            Regex("\\[.*?(?:वीडियो|ऑफ़िशियल|गाना|गीत|लिरिक्स).*?\\]"),
+            Regex("\\((?:वीडियो|ऑफ़िशियल|गाना|गीत|लिरिक्स|फुल वीडियो).*?\\)")
+        )
+
+        for (pattern in dirtyPatterns) {
+            text = text.replace(pattern, " ")
+        }
+
+        val cleaned = text
+            .replace(Regex("[\\[\\](){}]"), " ")
             .trim()
             .replace(Regex("\\s+"), " ")
+
+        return if (cleaned.isNotBlank()) cleaned else raw.replace(Regex("(?i)\\.(mp3|flac|wav|aac|m4a|ogg|opus|wma)$"), "").trim()
     }
 
     /**
-     * Cleans artist names for querying lyrics databases.
+     * Cleans artist names for querying lyrics & cover art databases, preserving regional Unicode.
      */
     fun normalizeArtistName(raw: String): String {
-        return raw
-            .replace(Regex("(?i)\\b(feat\\.|ft\\.|featuring)\\b.*"), "")
-            .replace(Regex("(?i)\\[.*?\\]|\\(.*?\\)"), "")
-            .trim()
+        var text = raw.replace(Regex("(?i)\\.(mp3|flac|wav|aac|m4a|ogg|opus|wma)$"), "")
+            .replace('_', ' ')
+
+        if (text.contains(" - ")) {
+            val parts = text.split(" - ")
+            if (parts.isNotEmpty()) {
+                text = parts.first()
+            }
+        }
+
+        val dirtyPatterns = listOf(
+            Regex("(?i)\\b\\d{2,3}\\s*kbps\\b"),
+            Regex("(?i)\\[.*?\\]|\\(.*?\\)"),
+            Regex("(?i)\\b(feat\\.|ft\\.|featuring)\\b.*"),
+            Regex("(?i)\\b(official|video|audio|lyrics?|remastered|remix|8d audio|8d|download|cover)\\b")
+        )
+
+        for (pattern in dirtyPatterns) {
+            text = text.replace(pattern, " ")
+        }
+
+        text = text.trim().replace(Regex("\\s+"), " ")
+
+        return if (text.isBlank() || text.equals("unknown", ignoreCase = true) || text.equals("<unknown>", ignoreCase = true)) {
+            "Unknown Artist"
+        } else {
+            text
+        }
     }
 
     /**
-     * High-res cover art fetcher using iTunes Search API.
+     * Multi-Stage Regional Cover Art Pipeline:
+     * Stage 1 (Primary): Embedded Metadata extraction from local file (.mp3, .m4a, .flac).
+     * Stage 2 (Secondary): Regional API Fetcher - JioSaavn & iTunes IN/BD for Bangla, Hindi, and regional tracks.
+     * Stage 3 (Tertiary): Deezer & Global iTunes fallback.
+     * Stage 4 (Quaternary): Generates vibrant gradient and dominant color caching.
      */
     suspend fun fetchArtworkForSong(song: Song): String? = withContext(Dispatchers.IO) {
+        // Step 0: Check Room DB offline cache
         val cached = songDao.getSongById(song.id)
         if (!cached?.customArtworkUrl.isNullOrBlank()) {
             return@withContext cached?.customArtworkUrl
@@ -383,16 +444,164 @@ class LyricsService(
             return@withContext song.customArtworkUrl
         }
 
+        // STAGE 1: PRIMARY STAGE (Embedded ID3 Metadata Frame Extraction)
+        try {
+            val embeddedArt = extractAndCacheEmbeddedArt(song)
+            if (!embeddedArt.isNullOrBlank()) {
+                Log.d(TAG, "Stage 1: Found embedded ID3 artwork for '${song.title}'")
+                return@withContext embeddedArt
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "Stage 1 embedded artwork attempt: ${e.message}")
+        }
+
         val cleanTitle = normalizeTrackTitle(song.title)
         val cleanArtist = normalizeArtistName(song.artist)
 
+        // STAGE 2: SECONDARY STAGE (Regional API Fetcher - JioSaavn & iTunes IN/BD)
+        // 2A: JioSaavn regional database (premier source for Bangla, Hindi, Punjabi, South Asian songs)
         try {
-            val queryStr = if (cleanArtist.isNotBlank() && cleanArtist != "Unknown Artist") "$cleanArtist $cleanTitle" else cleanTitle
-            val term = URLEncoder.encode(queryStr, "UTF-8")
-            val itunesUrl = "https://itunes.apple.com/search?term=$term&entity=song&limit=1"
+            val saavnArt = fetchFromJioSaavn(cleanArtist, cleanTitle)
+            if (!saavnArt.isNullOrBlank()) {
+                songDao.updateCustomArtwork(song.id, saavnArt)
+                extractAndCacheDominantColorFromUrl(song.id, saavnArt)
+                Log.d(TAG, "Stage 2A: Found regional artwork via JioSaavn for '$cleanTitle'")
+                return@withContext saavnArt
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "Stage 2A JioSaavn query error: ${e.message}")
+        }
 
+        // 2B: iTunes Regional Search API with country=IN (India) & country=BD (Bangladesh)
+        try {
+            val itunesRegionalArt = fetchFromItunesRegional(cleanArtist, cleanTitle)
+            if (!itunesRegionalArt.isNullOrBlank()) {
+                songDao.updateCustomArtwork(song.id, itunesRegionalArt)
+                extractAndCacheDominantColorFromUrl(song.id, itunesRegionalArt)
+                Log.d(TAG, "Stage 2B: Found regional artwork via iTunes IN/BD for '$cleanTitle'")
+                return@withContext itunesRegionalArt
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "Stage 2B iTunes regional error: ${e.message}")
+        }
+
+        // STAGE 3: TERTIARY STAGE (Deezer Search API & Global iTunes)
+        // 3A: Deezer API (comprehensive international & South Asian catalog, no API key required)
+        try {
+            val deezerArt = fetchFromDeezer(cleanArtist, cleanTitle)
+            if (!deezerArt.isNullOrBlank()) {
+                songDao.updateCustomArtwork(song.id, deezerArt)
+                extractAndCacheDominantColorFromUrl(song.id, deezerArt)
+                Log.d(TAG, "Stage 3A: Found artwork via Deezer for '$cleanTitle'")
+                return@withContext deezerArt
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "Stage 3A Deezer fetch error: ${e.message}")
+        }
+
+        // 3B: Global iTunes fallback
+        try {
+            val itunesGlobalArt = fetchFromItunesGlobal(cleanArtist, cleanTitle)
+            if (!itunesGlobalArt.isNullOrBlank()) {
+                songDao.updateCustomArtwork(song.id, itunesGlobalArt)
+                extractAndCacheDominantColorFromUrl(song.id, itunesGlobalArt)
+                Log.d(TAG, "Stage 3B: Found artwork via Global iTunes for '$cleanTitle'")
+                return@withContext itunesGlobalArt
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "Stage 3B Global iTunes error: ${e.message}")
+        }
+
+        // STAGE 4: QUATERNARY STAGE (Generate & Persist Dynamic Color Gradient Palette)
+        val fallbackColor = com.example.ui.components.CoverArtUtils.generatePaletteColor(cleanTitle)
+        songDao.updateDominantColor(song.id, fallbackColor)
+
+        return@withContext null
+    }
+
+    /**
+     * Extracts embedded album artwork byte frames from local audio file.
+     */
+    private suspend fun extractAndCacheEmbeddedArt(song: Song): String? {
+        val retriever = android.media.MediaMetadataRetriever()
+        return try {
+            var datasourceSet = false
+            if (song.filePath.isNotBlank()) {
+                val file = java.io.File(song.filePath)
+                if (file.exists()) {
+                    retriever.setDataSource(file.absolutePath)
+                    datasourceSet = true
+                }
+            }
+            if (!datasourceSet && song.contentUri.isNotBlank()) {
+                val uri = android.net.Uri.parse(song.contentUri)
+                retriever.setDataSource(context, uri)
+                datasourceSet = true
+            }
+            if (!datasourceSet) return null
+
+            val pictureBytes = retriever.embeddedPicture
+            if (pictureBytes != null && pictureBytes.isNotEmpty()) {
+                val artDir = java.io.File(context.filesDir, "artwork").apply { mkdirs() }
+                val artFile = java.io.File(artDir, "art_${song.id}.jpg")
+                artFile.writeBytes(pictureBytes)
+                val uriString = "file://${artFile.absolutePath}"
+
+                val dominantColor = extractDominantColorFromBytes(pictureBytes)
+                songDao.updateCustomArtwork(song.id, uriString)
+                songDao.updateDominantColor(song.id, dominantColor)
+                uriString
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            null
+        } finally {
+            try { retriever.release() } catch (_: Exception) {}
+        }
+    }
+
+    /**
+     * Queries JioSaavn regional music database for Hindi, Bengali, and Indian regional cover art.
+     */
+    private fun fetchFromJioSaavn(artist: String, title: String): String? {
+        if (title.isBlank()) return null
+        val queryStr = if (artist.isNotBlank() && artist != "Unknown Artist") "$artist $title" else title
+        val term = URLEncoder.encode(queryStr.trim(), "UTF-8")
+
+        // Try public JioSaavn autocomplete search endpoint
+        try {
+            val url = "https://www.jiosaavn.com/api.php?__call=autocomplete.get&query=$term&_format=json&_marker=0&ctx=android"
             val request = Request.Builder()
-                .url(itunesUrl)
+                .url(url)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val body = response.body?.string()
+                    if (!body.isNullOrBlank()) {
+                        val json = JSONObject(body)
+                        val songsObj = json.optJSONObject("songs")
+                        val dataArray = songsObj?.optJSONArray("data")
+                        if (dataArray != null && dataArray.length() > 0) {
+                            val first = dataArray.getJSONObject(0)
+                            val rawImage = first.optString("image")
+                            if (rawImage.isNotBlank()) {
+                                return rawImage.replace("150x150.jpg", "500x500.jpg")
+                                    .replace("50x50.jpg", "500x500.jpg")
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        // Fallback to Saavn open search proxy
+        try {
+            val searchUrl = "https://saavn.dev/api/search/songs?query=$term&limit=2"
+            val request = Request.Builder()
+                .url(searchUrl)
                 .header("User-Agent", "SongPlayer-Android/1.0")
                 .build()
 
@@ -401,24 +610,216 @@ class LyricsService(
                     val body = response.body?.string()
                     if (!body.isNullOrBlank()) {
                         val json = JSONObject(body)
-                        val results = json.optJSONArray("results")
+                        val data = json.optJSONObject("data")
+                        val results = data?.optJSONArray("results")
                         if (results != null && results.length() > 0) {
                             val first = results.getJSONObject(0)
-                            val rawUrl = first.optString("artworkUrl100")
-                            if (rawUrl.isNotBlank()) {
-                                val highRes = rawUrl.replace("100x100bb", "600x600bb")
-                                songDao.updateCustomArtwork(song.id, highRes)
-                                return@withContext highRes
+                            val imageObj = first.optJSONArray("image")
+                            if (imageObj != null && imageObj.length() > 0) {
+                                // Prefer highest resolution (last element)
+                                val bestImg = imageObj.getJSONObject(imageObj.length() - 1)
+                                val imgUrl = bestImg.optString("url")
+                                if (imgUrl.isNotBlank()) return imgUrl
                             }
                         }
                     }
                 }
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "iTunes artwork fetch failed: ${e.message}")
-        }
+        } catch (_: Exception) {}
 
-        return@withContext null
+        return null
+    }
+
+    /**
+     * Regional iTunes Search with country=IN (India) and country=BD (Bangladesh).
+     */
+    private fun fetchFromItunesRegional(artist: String, title: String): String? {
+        val queryStr = if (artist.isNotBlank() && artist != "Unknown Artist") "$artist $title" else title
+        val term = URLEncoder.encode(queryStr.trim(), "UTF-8")
+
+        for (country in listOf("IN", "BD")) {
+            try {
+                val itunesUrl = "https://itunes.apple.com/search?term=$term&country=$country&entity=song&limit=1"
+                val request = Request.Builder()
+                    .url(itunesUrl)
+                    .header("User-Agent", "SongPlayer-Android/1.0")
+                    .build()
+
+                client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val body = response.body?.string()
+                        if (!body.isNullOrBlank()) {
+                            val json = JSONObject(body)
+                            val results = json.optJSONArray("results")
+                            if (results != null && results.length() > 0) {
+                                val first = results.getJSONObject(0)
+                                val rawUrl = first.optString("artworkUrl100")
+                                if (rawUrl.isNotBlank()) {
+                                    return rawUrl.replace("100x100bb", "600x600bb")
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+        return null
+    }
+
+    /**
+     * Deezer Search API fallback for international and Indian music catalogs.
+     */
+    private fun fetchFromDeezer(artist: String, title: String): String? {
+        val queryStr = if (artist.isNotBlank() && artist != "Unknown Artist") "$artist $title" else title
+        val term = URLEncoder.encode(queryStr.trim(), "UTF-8")
+        val deezerUrl = "https://api.deezer.com/search?q=$term&limit=1"
+
+        val request = Request.Builder()
+            .url(deezerUrl)
+            .header("User-Agent", "SongPlayer-Android/1.0")
+            .build()
+
+        client.newCall(request).execute().use { response ->
+            if (response.isSuccessful) {
+                val body = response.body?.string()
+                if (!body.isNullOrBlank()) {
+                    val json = JSONObject(body)
+                    val data = json.optJSONArray("data")
+                    if (data != null && data.length() > 0) {
+                        val first = data.getJSONObject(0)
+                        val album = first.optJSONObject("album")
+                        val coverXl = album?.optString("cover_xl")
+                        val coverBig = album?.optString("cover_big")
+                        val coverMedium = album?.optString("cover_medium")
+                        val chosen = when {
+                            !coverXl.isNullOrBlank() -> coverXl
+                            !coverBig.isNullOrBlank() -> coverBig
+                            else -> coverMedium
+                        }
+                        if (!chosen.isNullOrBlank()) return chosen
+                    }
+                }
+            }
+        }
+        return null
+    }
+
+    /**
+     * Global iTunes search fallback without regional constraint.
+     */
+    private fun fetchFromItunesGlobal(artist: String, title: String): String? {
+        val queryStr = if (artist.isNotBlank() && artist != "Unknown Artist") "$artist $title" else title
+        val term = URLEncoder.encode(queryStr.trim(), "UTF-8")
+        val itunesUrl = "https://itunes.apple.com/search?term=$term&entity=song&limit=1"
+
+        val request = Request.Builder()
+            .url(itunesUrl)
+            .header("User-Agent", "SongPlayer-Android/1.0")
+            .build()
+
+        client.newCall(request).execute().use { response ->
+            if (response.isSuccessful) {
+                val body = response.body?.string()
+                if (!body.isNullOrBlank()) {
+                    val json = JSONObject(body)
+                    val results = json.optJSONArray("results")
+                    if (results != null && results.length() > 0) {
+                        val first = results.getJSONObject(0)
+                        val rawUrl = first.optString("artworkUrl100")
+                        if (rawUrl.isNotBlank()) {
+                            return rawUrl.replace("100x100bb", "600x600bb")
+                        }
+                    }
+                }
+            }
+        }
+        return null
+    }
+
+    /**
+     * Asynchronously downloads a tiny preview of an online artwork URL to extract
+     * and persist its dominant vibrant color in Room DB.
+     */
+    private suspend fun extractAndCacheDominantColorFromUrl(songId: Long, imageUrl: String) {
+        try {
+            val request = Request.Builder().url(imageUrl).build()
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val bytes = response.body?.bytes()
+                    if (bytes != null && bytes.isNotEmpty()) {
+                        val color = extractDominantColorFromBytes(bytes)
+                        songDao.updateDominantColor(songId, color)
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * Extracts dominant vibrant color from image byte array.
+     */
+    fun extractDominantColorFromBytes(pictureBytes: ByteArray): Long {
+        return try {
+            val options = android.graphics.BitmapFactory.Options().apply {
+                inSampleSize = 8
+            }
+            val bitmap = android.graphics.BitmapFactory.decodeByteArray(pictureBytes, 0, pictureBytes.size, options)
+                ?: return 0xFF1DB954L
+            extractDominantColorFromBitmap(bitmap)
+        } catch (_: Exception) {
+            0xFF1DB954L
+        }
+    }
+
+    fun extractDominantColorFromBitmap(bitmap: android.graphics.Bitmap): Long {
+        return try {
+            var totalR = 0L
+            var totalG = 0L
+            var totalB = 0L
+            var count = 0
+            val width = bitmap.width
+            val height = bitmap.height
+            val stepX = (width / 16).coerceAtLeast(1)
+            val stepY = (height / 16).coerceAtLeast(1)
+
+            var maxSat = -1f
+            var vibrantColor = 0xFF1DB954L
+            val hsv = FloatArray(3)
+
+            for (x in 0 until width step stepX) {
+                for (y in 0 until height step stepY) {
+                    val pixel = bitmap.getPixel(x, y)
+                    val r = (pixel shr 16) and 0xFF
+                    val g = (pixel shr 8) and 0xFF
+                    val b = pixel and 0xFF
+                    android.graphics.Color.colorToHSV(pixel, hsv)
+                    val sat = hsv[1]
+                    val value = hsv[2]
+
+                    if (sat > 0.25f && value > 0.2f && value < 0.95f) {
+                        if (sat > maxSat) {
+                            maxSat = sat
+                            vibrantColor = 0xFF000000L or ((r.toLong() and 0xFF) shl 16) or ((g.toLong() and 0xFF) shl 8) or (b.toLong() and 0xFF)
+                        }
+                    }
+                    totalR += r
+                    totalG += g
+                    totalB += b
+                    count++
+                }
+            }
+            if (maxSat > 0.25f) vibrantColor
+            else if (count > 0) {
+                val avgR = (totalR / count).coerceIn(30, 220)
+                val avgG = (totalG / count).coerceIn(30, 220)
+                val avgB = (totalB / count).coerceIn(30, 220)
+                0xFF000000L or (avgR shl 16) or (avgG shl 8) or avgB
+            } else {
+                0xFF1DB954L
+            }
+        } catch (_: Exception) {
+            0xFF1DB954L
+        }
     }
 
     /**

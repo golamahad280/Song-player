@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.model.Song
 import com.example.ui.components.SongListItem
+import com.example.ui.components.SpotifyCoverArt
 import com.example.ui.theme.SpotifyBlack
 import com.example.ui.theme.SpotifyCardBackground
 import com.example.ui.theme.SpotifyElevated
@@ -109,22 +110,15 @@ fun HomeScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.clickable { onOpenProfileManager() }
                 ) {
-                    Box(
+                    androidx.compose.foundation.Image(
+                        painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.ic_sp_logo),
+                        contentDescription = "Song Player Logo",
                         modifier = Modifier
-                            .size(36.dp)
+                            .size(38.dp)
                             .clip(CircleShape)
-                            .background(Color(currentProfile?.avatarColor ?: 0xFF1ED760)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = currentProfile?.initials ?: "U",
-                            color = SpotifyBlack,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp
-                        )
-                    }
+                    )
 
-                    Spacer(modifier = Modifier.width(12.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
 
                     Column {
                         Text(
@@ -274,23 +268,15 @@ fun QuickPickCard(
             .testTag("quick_pick_${song.id}"),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(
-            modifier = Modifier
-                .size(56.dp)
-                .background(SpotifyElevated),
-            contentAlignment = Alignment.Center
-        ) {
-            if (!song.customArtworkUrl.isNullOrBlank()) {
-                AsyncImage(
-                    model = song.customArtworkUrl,
-                    contentDescription = song.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.size(56.dp)
-                )
-            } else {
-                Icon(Icons.Default.MusicNote, contentDescription = null, tint = SpotifyTextMuted)
-            }
-        }
+        SpotifyCoverArt(
+            artworkUrl = song.customArtworkUrl,
+            title = song.title,
+            artist = song.artist,
+            dominantColorHex = song.dominantColor,
+            shape = RoundedCornerShape(topStart = 6.dp, bottomStart = 6.dp),
+            modifier = Modifier.size(56.dp),
+            initialsSize = 14.sp
+        )
 
         Spacer(modifier = Modifier.width(10.dp))
 
@@ -328,16 +314,15 @@ fun AlbumCard(
                 .background(SpotifyElevated),
             contentAlignment = Alignment.Center
         ) {
-            if (!song.customArtworkUrl.isNullOrBlank()) {
-                AsyncImage(
-                    model = song.customArtworkUrl,
-                    contentDescription = song.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
-            } else {
-                Icon(Icons.Default.MusicNote, contentDescription = null, tint = SpotifyTextMuted, modifier = Modifier.size(48.dp))
-            }
+            SpotifyCoverArt(
+                artworkUrl = song.customArtworkUrl,
+                title = song.title,
+                artist = song.artist,
+                dominantColorHex = song.dominantColor,
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxSize(),
+                initialsSize = 28.sp
+            )
 
             if (isCurrent) {
                 Box(

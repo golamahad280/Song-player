@@ -514,10 +514,7 @@ class SongPlayerViewModel(application: Application) : AndroidViewModel(applicati
     fun saveLyrics(songId: Long, customLyrics: String, isSynced: Boolean) {
         viewModelScope.launch(Dispatchers.IO) {
             fetcher.saveManualLyrics(songId, customLyrics, isSynced)
-            val current = currentSong.value
-            if (current?.id == songId) {
-                playerManager.playSong(current.copy(lyrics = customLyrics, isSyncedLyrics = isSynced), playerManager.queue.value)
-            }
+            playerManager.updateCurrentSongLyrics(songId, customLyrics, isSynced)
         }
     }
 
@@ -528,7 +525,7 @@ class SongPlayerViewModel(application: Application) : AndroidViewModel(applicati
             try {
                 val (lyrics, isSynced) = fetcher.fetchLyricsForSong(current)
                 if (!lyrics.isNullOrBlank()) {
-                    playerManager.playSong(current.copy(lyrics = lyrics, isSyncedLyrics = isSynced), playerManager.queue.value)
+                    playerManager.updateCurrentSongLyrics(current.id, lyrics, isSynced)
                 }
             } finally {
                 _isFetchingLyrics.value = false

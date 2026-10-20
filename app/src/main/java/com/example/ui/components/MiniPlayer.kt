@@ -97,29 +97,15 @@ fun MiniPlayer(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // Album Art
-                Box(
-                    modifier = Modifier
-                        .size(42.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(SpotifyElevated),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (!song.customArtworkUrl.isNullOrBlank()) {
-                        AsyncImage(
-                            model = song.customArtworkUrl,
-                            contentDescription = song.title,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.size(42.dp)
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Default.MusicNote,
-                            contentDescription = null,
-                            tint = SpotifyTextMuted,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
+                SpotifyCoverArt(
+                    artworkUrl = song.customArtworkUrl,
+                    title = song.title,
+                    artist = song.artist,
+                    dominantColorHex = song.dominantColor,
+                    shape = RoundedCornerShape(6.dp),
+                    modifier = Modifier.size(42.dp),
+                    initialsSize = 12.sp
+                )
 
                 Spacer(modifier = Modifier.width(10.dp))
 

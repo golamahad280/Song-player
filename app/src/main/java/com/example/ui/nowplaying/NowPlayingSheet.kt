@@ -82,6 +82,7 @@ import coil.compose.AsyncImage
 import com.example.model.LyricsParser
 import com.example.model.Song
 import com.example.player.RepeatMode
+import com.example.ui.components.SpotifyCoverArt
 import com.example.ui.lyrics.SyncedLyricsView
 import com.example.ui.theme.SpotifyBlack
 import com.example.ui.theme.SpotifyCardBackground
@@ -249,21 +250,15 @@ fun NowPlayingSheet(
                     .background(SpotifyElevated),
                 contentAlignment = Alignment.Center
             ) {
-                if (!song.customArtworkUrl.isNullOrBlank()) {
-                    AsyncImage(
-                        model = song.customArtworkUrl,
-                        contentDescription = song.title,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else {
-                    Icon(
-                        imageVector = Icons.Default.MusicNote,
-                        contentDescription = null,
-                        tint = SpotifyTextMuted,
-                        modifier = Modifier.size(96.dp)
-                    )
-                }
+                SpotifyCoverArt(
+                    artworkUrl = song.customArtworkUrl,
+                    title = song.title,
+                    artist = song.artist,
+                    dominantColorHex = song.dominantColor ?: dominantColorHex,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxSize(),
+                    initialsSize = 64.sp
+                )
             }
 
             Spacer(modifier = Modifier.height(32.dp))

@@ -62,6 +62,7 @@ import androidx.compose.ui.window.Dialog
 import coil.compose.AsyncImage
 import com.example.model.Playlist
 import com.example.model.Song
+import com.example.ui.components.SpotifyCoverArt
 import com.example.ui.theme.SpotifyBlack
 import com.example.ui.theme.SpotifyCardBackground
 import com.example.ui.theme.SpotifyDivider
@@ -295,24 +296,15 @@ fun PlaylistDetailScreen(
                         )
 
                         // Artwork
-                        Box(
-                            modifier = Modifier
-                                .size(42.dp)
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(SpotifyElevated),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (!song.customArtworkUrl.isNullOrBlank()) {
-                                AsyncImage(
-                                    model = song.customArtworkUrl,
-                                    contentDescription = song.title,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.size(42.dp)
-                                )
-                            } else {
-                                Icon(Icons.Default.MusicNote, contentDescription = null, tint = SpotifyTextMuted)
-                            }
-                        }
+                        SpotifyCoverArt(
+                            artworkUrl = song.customArtworkUrl,
+                            title = song.title,
+                            artist = song.artist,
+                            dominantColorHex = song.dominantColor,
+                            shape = RoundedCornerShape(4.dp),
+                            modifier = Modifier.size(42.dp),
+                            initialsSize = 12.sp
+                        )
 
                         Spacer(modifier = Modifier.width(10.dp))
 
