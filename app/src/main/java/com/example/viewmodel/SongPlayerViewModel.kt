@@ -135,9 +135,9 @@ class SongPlayerViewModel(application: Application) : AndroidViewModel(applicati
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     init {
-        // Schedule periodic automatic storage scan every 6 hours
+        // Schedule periodic automatic storage scan every 1 hour (60 minutes)
         try {
-            val periodicWork = PeriodicWorkRequestBuilder<StorageScanWorker>(6, TimeUnit.HOURS).build()
+            val periodicWork = PeriodicWorkRequestBuilder<StorageScanWorker>(1, TimeUnit.HOURS).build()
             WorkManager.getInstance(application).enqueueUniquePeriodicWork(
                 "StorageScanPeriodicWork",
                 ExistingPeriodicWorkPolicy.KEEP,

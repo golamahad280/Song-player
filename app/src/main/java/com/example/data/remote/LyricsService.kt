@@ -157,7 +157,7 @@ class LyricsService(
 
         try {
             val durationSec = (durationMs / 1000).coerceAtLeast(1)
-            val prompt = "You are an expert music lyrics parser. Return the complete, official lyrics for the song \"$title\" by \"$artist\". Strictly output in timestamped LRC format [mm:ss.xx] distributed proportionally across the track duration of $durationSec seconds. Output ONLY the timestamped LRC text without any markdown or conversational commentary."
+            val prompt = "You are an expert music lyrics aligner. Return the COMPLETE official lyrics for \"$title\" by \"$artist\". The exact track duration is $durationSec seconds. STRICTLTY OUTPUT IN TIMESTAMPED LRC FORMAT [mm:ss.xx] WITH TIMESTAMPS DISTRIBUTED PROPORTIONALLY ACCORDING TO SONG STRUCTURE. DO NOT RETURN MARKDOWN OR PLAIN TEXT. ONLY RETURN VALID LRC LINES."
             val jsonBody = JSONObject().apply {
                 put("contents", JSONArray().put(JSONObject().put("parts", JSONArray().put(JSONObject().put("text", prompt)))))
             }
@@ -349,81 +349,12 @@ class LyricsService(
      * Conforms to Section 1 Metadata Cleaning Pipeline while strictly preserving Bengali (\u0980-\u09FF),
      * Devanagari (\u0900-\u097F), and regional Unicode scripts.
      */
-    fun normalizeTrackTitle(raw: String): String {
-        var text = raw.replace(Regex("(?i)\\.(mp3|flac|wav|aac|m4a|ogg|opus|wma)$"), "")
-        text = text.replace('_', ' ')
-
-        // Handle "Artist - Title" format in file names
-        if (text.contains(" - ")) {
-            val parts = text.split(" - ")
-            if (parts.size >= 2) {
-                text = parts.last()
-            }
-        }
-
-        val dirtyPatterns = listOf(
-            Regex("(?i)\\b\\d{2,3}\\s*kbps\\b"),
-            // English video & audio markers
-            Regex("(?i)\\[.*?(?:official|video|audio|lyrics?|lyric video|music video|hd|4k|1080p|720p|remastered|remaster|remix|8d audio|8d|download|cover|audio).*?\\]"),
-            Regex("(?i)\\((?:official|video|audio|lyrics?|lyric video|music video|hd|4k|1080p|720p|remastered|remaster|remix|8d audio|8d|download|cover|audio|clean|explicit|version).*?\\)"),
-            Regex("(?i)\\b(official\\s*video|official\\s*audio|music\\s*video|lyric\\s*video|lyrics?\\s*video|official)\\b"),
-            Regex("(?i)\\b(hd|4k|hq|1080p|720p)\\b"),
-            Regex("(?i)\\b(8d\\s*audio|8d|audio\\s*video|download|full\\s*song|full\\s*audio)\\b"),
-            Regex("(?i)\\b(remastered|remaster|remix|cover)\\b"),
-            Regex("(?i)\\b(feat\\.|ft\\.|featuring)\\b.*"),
-            // Regional Bangla video & audio tags
-            Regex("\\[.*?(?:ভিডিও|অফিশিয়াল|গান|লিরিক্স|অডিও).*?\\]"),
-            Regex("\\((?:ভিডিও|অফিশিয়াল|গান|লিরিক্স|অডিও|লিরিক্যাল|ফুল ভিডিও).*?\\)"),
-            // Regional Hindi / Devanagari video & audio tags
-            Regex("\\[.*?(?:वीडियो|ऑफ़िशियल|गाना|गीत|लिरिक्स).*?\\]"),
-            Regex("\\((?:वीडियो|ऑफ़िशियल|गाना|गीत|लिरिक्स|फुल वीडियो).*?\\)")
-        )
-
-        for (pattern in dirtyPatterns) {
-            text = text.replace(pattern, " ")
-        }
-
-        val cleaned = text
-            .replace(Regex("[\\[\\](){}]"), " ")
-            .trim()
-            .replace(Regex("\\s+"), " ")
-
-        return if (cleaned.isNotBlank()) cleaned else raw.replace(Regex("(?i)\\.(mp3|flac|wav|aac|m4a|ogg|opus|wma)$"), "").trim()
-    }
+    fun normalizeTrackTitle(raw: String): String = com.example.util.MetadataSanitizer.cleanTitle(raw)
 
     /**
      * Cleans artist names for querying lyrics & cover art databases, preserving regional Unicode.
      */
-    fun normalizeArtistName(raw: String): String {
-        var text = raw.replace(Regex("(?i)\\.(mp3|flac|wav|aac|m4a|ogg|opus|wma)$"), "")
-            .replace('_', ' ')
-
-        if (text.contains(" - ")) {
-            val parts = text.split(" - ")
-            if (parts.isNotEmpty()) {
-                text = parts.first()
-            }
-        }
-
-        val dirtyPatterns = listOf(
-            Regex("(?i)\\b\\d{2,3}\\s*kbps\\b"),
-            Regex("(?i)\\[.*?\\]|\\(.*?\\)"),
-            Regex("(?i)\\b(feat\\.|ft\\.|featuring)\\b.*"),
-            Regex("(?i)\\b(official|video|audio|lyrics?|remastered|remix|8d audio|8d|download|cover)\\b")
-        )
-
-        for (pattern in dirtyPatterns) {
-            text = text.replace(pattern, " ")
-        }
-
-        text = text.trim().replace(Regex("\\s+"), " ")
-
-        return if (text.isBlank() || text.equals("unknown", ignoreCase = true) || text.equals("<unknown>", ignoreCase = true)) {
-            "Unknown Artist"
-        } else {
-            text
-        }
-    }
+    fun normalizeArtistName(raw: String): String = com.example.util.MetadataSanitizer.cleanArtist(raw)
 
     /**
      * Multi-Stage Regional Cover Art Pipeline:
@@ -463,10 +394,9 @@ class LyricsService(
         try {
             val saavnArt = fetchFromJioSaavn(cleanArtist, cleanTitle)
             if (!saavnArt.isNullOrBlank()) {
-                songDao.updateCustomArtwork(song.id, saavnArt)
-                extractAndCacheDominantColorFromUrl(song.id, saavnArt)
+                val persistentUrl = downloadAndCacheArtworkLocally(song.id, saavnArt)
                 Log.d(TAG, "Stage 2A: Found regional artwork via JioSaavn for '$cleanTitle'")
-                return@withContext saavnArt
+                return@withContext persistentUrl
             }
         } catch (e: Exception) {
             Log.d(TAG, "Stage 2A JioSaavn query error: ${e.message}")
@@ -476,10 +406,9 @@ class LyricsService(
         try {
             val itunesRegionalArt = fetchFromItunesRegional(cleanArtist, cleanTitle)
             if (!itunesRegionalArt.isNullOrBlank()) {
-                songDao.updateCustomArtwork(song.id, itunesRegionalArt)
-                extractAndCacheDominantColorFromUrl(song.id, itunesRegionalArt)
+                val persistentUrl = downloadAndCacheArtworkLocally(song.id, itunesRegionalArt)
                 Log.d(TAG, "Stage 2B: Found regional artwork via iTunes IN/BD for '$cleanTitle'")
-                return@withContext itunesRegionalArt
+                return@withContext persistentUrl
             }
         } catch (e: Exception) {
             Log.d(TAG, "Stage 2B iTunes regional error: ${e.message}")
@@ -490,10 +419,9 @@ class LyricsService(
         try {
             val deezerArt = fetchFromDeezer(cleanArtist, cleanTitle)
             if (!deezerArt.isNullOrBlank()) {
-                songDao.updateCustomArtwork(song.id, deezerArt)
-                extractAndCacheDominantColorFromUrl(song.id, deezerArt)
+                val persistentUrl = downloadAndCacheArtworkLocally(song.id, deezerArt)
                 Log.d(TAG, "Stage 3A: Found artwork via Deezer for '$cleanTitle'")
-                return@withContext deezerArt
+                return@withContext persistentUrl
             }
         } catch (e: Exception) {
             Log.d(TAG, "Stage 3A Deezer fetch error: ${e.message}")
@@ -503,16 +431,27 @@ class LyricsService(
         try {
             val itunesGlobalArt = fetchFromItunesGlobal(cleanArtist, cleanTitle)
             if (!itunesGlobalArt.isNullOrBlank()) {
-                songDao.updateCustomArtwork(song.id, itunesGlobalArt)
-                extractAndCacheDominantColorFromUrl(song.id, itunesGlobalArt)
+                val persistentUrl = downloadAndCacheArtworkLocally(song.id, itunesGlobalArt)
                 Log.d(TAG, "Stage 3B: Found artwork via Global iTunes for '$cleanTitle'")
-                return@withContext itunesGlobalArt
+                return@withContext persistentUrl
             }
         } catch (e: Exception) {
             Log.d(TAG, "Stage 3B Global iTunes error: ${e.message}")
         }
 
-        // STAGE 4: QUATERNARY STAGE (Generate & Persist Dynamic Color Gradient Palette)
+        // STAGE 4: QUATERNARY STAGE (Gemini Image Search Fallback)
+        try {
+            val geminiArt = fetchArtworkFromGemini(cleanArtist, cleanTitle)
+            if (!geminiArt.isNullOrBlank()) {
+                val persistentUrl = downloadAndCacheArtworkLocally(song.id, geminiArt)
+                Log.d(TAG, "Stage 4: Found artwork via Gemini Fallback for '$cleanTitle'")
+                return@withContext persistentUrl
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "Stage 4 Gemini artwork fallback error: ${e.message}")
+        }
+
+        // STAGE 5: PALETTE FALLBACK (Generate & Persist Dynamic Color Gradient Palette)
         val fallbackColor = com.example.ui.components.CoverArtUtils.generatePaletteColor(cleanTitle)
         songDao.updateDominantColor(song.id, fallbackColor)
 
@@ -737,11 +676,12 @@ class LyricsService(
     }
 
     /**
-     * Asynchronously downloads a tiny preview of an online artwork URL to extract
-     * and persist its dominant vibrant color in Room DB.
+     * Downloads an online artwork URL to local app storage for permanent offline caching,
+     * extracts its dominant vibrant color, and persists both to Room DB.
+     * Once cached, thumbnails load instantly offline without network access.
      */
-    private suspend fun extractAndCacheDominantColorFromUrl(songId: Long, imageUrl: String) {
-        try {
+    private suspend fun downloadAndCacheArtworkLocally(songId: Long, imageUrl: String): String {
+        return try {
             val request = Request.Builder().url(imageUrl).build()
             client.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
@@ -749,10 +689,68 @@ class LyricsService(
                     if (bytes != null && bytes.isNotEmpty()) {
                         val color = extractDominantColorFromBytes(bytes)
                         songDao.updateDominantColor(songId, color)
+
+                        // Save image to persistent local storage for instant offline loading
+                        val artDir = java.io.File(context.filesDir, "artwork_cache").apply { mkdirs() }
+                        val cachedFile = java.io.File(artDir, "art_${songId}.jpg")
+                        cachedFile.writeBytes(bytes)
+                        val localUrl = "file://${cachedFile.absolutePath}"
+                        songDao.updateCustomArtwork(songId, localUrl)
+                        return localUrl
                     }
                 }
             }
-        } catch (_: Exception) {}
+            songDao.updateCustomArtwork(songId, imageUrl)
+            imageUrl
+        } catch (e: Exception) {
+            Log.d(TAG, "Failed to download artwork locally: ${e.message}")
+            songDao.updateCustomArtwork(songId, imageUrl)
+            imageUrl
+        }
+    }
+
+    /**
+     * Quaternary Stage: Gemini Image Search Fallback for Regional & Multi-language Songs.
+     */
+    private fun fetchArtworkFromGemini(artist: String, title: String): String? {
+        val apiKey = com.example.BuildConfig.GEMINI_API_KEY
+        if (apiKey.isBlank()) return null
+        return try {
+            val prompt = "You are an expert music metadata retriever. What is the official public high-resolution album cover artwork URL for the song \"$title\" by \"$artist\"? Return ONLY the raw direct image URL (starting with http:// or https:// and ending with .jpg, .png, or an image CDN link). Do not return markdown, quotes, explanations, or any other text. If unknown, reply NONE."
+            val jsonBody = JSONObject().apply {
+                put("contents", JSONArray().put(JSONObject().put("parts", JSONArray().put(JSONObject().put("text", prompt)))))
+            }
+
+            val mediaType = "application/json; charset=utf-8".toMediaType()
+            val requestBody = jsonBody.toString().toRequestBody(mediaType)
+            val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$apiKey"
+            val request = Request.Builder().url(url).post(requestBody).build()
+
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val body = response.body?.string()
+                    if (!body.isNullOrBlank()) {
+                        val json = JSONObject(body)
+                        val candidates = json.optJSONArray("candidates")
+                        if (candidates != null && candidates.length() > 0) {
+                            val content = candidates.getJSONObject(0).optJSONObject("content")
+                            val parts = content?.optJSONArray("parts")
+                            if (parts != null && parts.length() > 0) {
+                                val text = parts.getJSONObject(0).optString("text").trim()
+                                if (text.startsWith("http://") || text.startsWith("https://")) {
+                                    val cleanUrl = text.lines().firstOrNull()?.trim() ?: text
+                                    if (cleanUrl.startsWith("http")) return cleanUrl
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            null
+        } catch (e: Exception) {
+            Log.d(TAG, "Gemini artwork fallback error: ${e.message}")
+            null
+        }
     }
 
     /**

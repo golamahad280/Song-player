@@ -48,7 +48,9 @@ class StorageScanWorker(
                         dateAdded = song.dateAdded,
                         year = song.year,
                         playCount = 0,
-                        isFavorite = false
+                        isFavorite = false,
+                        customArtworkUrl = song.customArtworkUrl,
+                        dominantColor = song.dominantColor
                     )
                 }
                 songDao.insertOrUpdateSongs(entities)

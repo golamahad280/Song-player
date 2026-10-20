@@ -31,11 +31,13 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -47,12 +49,13 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -66,7 +69,6 @@ import com.example.model.LyricsParser
 import com.example.model.Song
 import com.example.ui.theme.SpotifyBlack
 import com.example.ui.theme.SpotifyCardBackground
-import com.example.ui.theme.SpotifyCardHover
 import com.example.ui.theme.SpotifyDivider
 import com.example.ui.theme.SpotifyElevated
 import com.example.ui.theme.SpotifyGreen
@@ -74,6 +76,15 @@ import com.example.ui.theme.SpotifyTextMuted
 import com.example.ui.theme.SpotifyTextPrimary
 import com.example.ui.theme.SpotifyTextSecondary
 
+/**
+ * Production-grade Spotify-style Synced Lyrics Component:
+ * - Millisecond live audio stream synchronization.
+ * - Active line: Dynamic scaling, bright Spotify White (#FFFFFF) text, active glow effect.
+ * - Inactive lines: Dimmed to 35% opacity gray (#59FFFFFF).
+ * - Smooth vertical physics centering: Smooth animate-scrolls active line to vertical center.
+ * - Tap-to-Seek: Tapping any lyric line instantly seeks the audio player to that exact timestamp.
+ * - Integrated Manual Tap-to-Sync Editor & Text Editor.
+ */
 @Composable
 fun SyncedLyricsView(
     song: Song?,
@@ -82,11 +93,14 @@ fun SyncedLyricsView(
     onSaveLyrics: (String, Boolean) -> Unit,
     onFetchOnline: () -> Unit,
     isFetchingOnline: Boolean = false,
+    isPlaying: Boolean = false,
+    onPlayPause: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    var showEditDialog by remember { mutableStateOf(false) }
+    var showTextEditDialog by remember { mutableStateOf(false) }
+    var showTapSyncEditor by remember { mutableStateOf(false) }
 
-    // Auto-fetch lyrics as soon as the view is opened if lyrics are not already loaded or cached
+    // Auto-fetch lyrics as soon as the view is opened if missing
     LaunchedEffect(song?.id) {
         if (song != null && song.lyrics.isNullOrBlank() && !isFetchingOnline) {
             onFetchOnline()
@@ -111,7 +125,7 @@ fun SyncedLyricsView(
 
     val listState = rememberLazyListState()
 
-    // Smoothly scroll active lyric into center of view
+    // Smooth physics vertical centering of the active line
     LaunchedEffect(activeIndex) {
         if (activeIndex in parsedLines.indices) {
             val targetScroll = (activeIndex - 2).coerceAtLeast(0)
@@ -121,7 +135,7 @@ fun SyncedLyricsView(
 
     Box(modifier = modifier.fillMaxSize()) {
         if (parsedLines.isEmpty()) {
-            // Empty / Loading Lyrics State
+            // Empty / Fetching State
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -145,7 +159,7 @@ fun SyncedLyricsView(
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Querying LRCLIB, music databases & AI sync engine",
+                        text = "Querying LRCLIB API, regional databases & AI timestamp generator",
                         color = SpotifyTextSecondary,
                         fontSize = 13.sp,
                         textAlign = TextAlign.Center
@@ -161,7 +175,7 @@ fun SyncedLyricsView(
                     Spacer(modifier = Modifier.height(16.dp))
 
                     Text(
-                        text = "Syncing Lyrics for this track",
+                        text = "No Synced Lyrics Found",
                         color = SpotifyTextPrimary,
                         fontSize = 17.sp,
                         fontWeight = FontWeight.Bold,
@@ -169,7 +183,7 @@ fun SyncedLyricsView(
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Once retrieved, lyrics are automatically cached for instant offline playback.",
+                        text = "Fetch online via LRCLIB & Gemini, tap-to-sync manually, or paste lyrics.",
                         color = SpotifyTextSecondary,
                         fontSize = 13.sp,
                         textAlign = TextAlign.Center
@@ -177,7 +191,10 @@ fun SyncedLyricsView(
 
                     Spacer(modifier = Modifier.height(24.dp))
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
                         Button(
                             onClick = onFetchOnline,
                             colors = ButtonDefaults.buttonColors(containerColor = SpotifyGreen),
@@ -186,35 +203,50 @@ fun SyncedLyricsView(
                         ) {
                             Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = SpotifyBlack)
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Fetch & Sync", color = SpotifyBlack, fontWeight = FontWeight.Bold)
+                            Text("Fetch Online / AI", color = SpotifyBlack, fontWeight = FontWeight.Bold)
                         }
 
-                        OutlinedButton(
-                            onClick = { showEditDialog = true },
-                            shape = RoundedCornerShape(24.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = SpotifyTextPrimary),
-                            modifier = Modifier.testTag("edit_lyrics_empty_button")
-                        ) {
-                            Icon(Icons.Default.Edit, contentDescription = null, tint = SpotifyTextPrimary)
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Edit Lyrics")
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            OutlinedButton(
+                                onClick = { showTapSyncEditor = true },
+                                shape = RoundedCornerShape(24.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = SpotifyGreen),
+                                modifier = Modifier.testTag("tap_to_sync_empty_button")
+                            ) {
+                                Icon(Icons.Default.TouchApp, contentDescription = null, tint = SpotifyGreen, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Tap-to-Sync", color = SpotifyGreen, fontWeight = FontWeight.Bold)
+                            }
+
+                            OutlinedButton(
+                                onClick = { showTextEditDialog = true },
+                                shape = RoundedCornerShape(24.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = SpotifyTextPrimary),
+                                modifier = Modifier.testTag("edit_lyrics_empty_button")
+                            ) {
+                                Icon(Icons.Default.Edit, contentDescription = null, tint = SpotifyTextPrimary, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Edit Text")
+                            }
                         }
                     }
                 }
             }
         } else {
-            // Live Synced Lyrics Stream
+            // Live Real-Time Karaoke Synced Stream
             LazyColumn(
                 state = listState,
-                contentPadding = PaddingValues(top = 80.dp, bottom = 140.dp, start = 24.dp, end = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(20.dp),
-                modifier = Modifier.fillMaxSize().testTag("synced_lyrics_list")
+                contentPadding = PaddingValues(top = 70.dp, bottom = 140.dp, start = 24.dp, end = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(22.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .testTag("synced_lyrics_list")
             ) {
                 itemsIndexed(parsedLines) { index, line ->
                     val isActive = index == activeIndex
 
                     val textColor by animateColorAsState(
-                        targetValue = if (isActive) Color.White else Color(0x66FFFFFF),
+                        targetValue = if (isActive) Color.White else Color(0x59FFFFFF),
                         label = "lyricTextColor"
                     )
 
@@ -230,7 +262,7 @@ fun SyncedLyricsView(
                             .graphicsLayer {
                                 scaleX = scale
                                 scaleY = scale
-                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0.5f)
+                                transformOrigin = TransformOrigin(0f, 0.5f)
                             }
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
@@ -244,9 +276,19 @@ fun SyncedLyricsView(
                         Text(
                             text = line.text,
                             color = textColor,
-                            fontSize = if (isActive) 22.sp else 18.sp,
+                            fontSize = if (isActive) 23.sp else 18.sp,
                             fontWeight = if (isActive) FontWeight.ExtraBold else FontWeight.SemiBold,
-                            lineHeight = if (isActive) 30.sp else 24.sp
+                            lineHeight = if (isActive) 32.sp else 26.sp,
+                            style = if (isActive) {
+                                LocalTextStyle.current.copy(
+                                    shadow = Shadow(
+                                        color = Color(0xB3FFFFFF),
+                                        blurRadius = 14f
+                                    )
+                                )
+                            } else {
+                                LocalTextStyle.current
+                            }
                         )
 
                         if (isActive && line.timeMs > 0) {
@@ -262,60 +304,100 @@ fun SyncedLyricsView(
                 }
             }
 
-            // Top action bar (Edit / Search Online)
+            // Top Quick Action Bar (Tap-to-Sync / Refresh / Text Edit)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 12.dp)
+                    .padding(horizontal = 20.dp, vertical = 10.dp)
                     .align(Alignment.TopEnd),
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                // Tap-to-Sync tapper button
+                IconButton(
+                    onClick = { showTapSyncEditor = true },
+                    modifier = Modifier
+                        .size(36.dp)
+                        .background(Color(0x77000000), CircleShape)
+                        .testTag("open_tap_to_sync_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.TouchApp,
+                        contentDescription = "Tap to Sync Editor",
+                        tint = SpotifyGreen,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                // Refresh from online
                 IconButton(
                     onClick = onFetchOnline,
                     modifier = Modifier
-                        .background(Color(0x66000000), CircleShape)
+                        .size(36.dp)
+                        .background(Color(0x77000000), CircleShape)
                         .testTag("refresh_online_lyrics_button")
                 ) {
                     if (isFetchingOnline) {
                         CircularProgressIndicator(
                             color = SpotifyGreen,
-                            modifier = Modifier.size(20.dp),
+                            modifier = Modifier.size(18.dp),
                             strokeWidth = 2.dp
                         )
                     } else {
                         Icon(
-                            Icons.Default.Refresh,
-                            contentDescription = "Search Online Lyrics",
-                            tint = SpotifyTextPrimary
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Refresh from Online",
+                            tint = SpotifyTextPrimary,
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }
 
                 Spacer(modifier = Modifier.width(8.dp))
 
+                // Text Edit
                 IconButton(
-                    onClick = { showEditDialog = true },
+                    onClick = { showTextEditDialog = true },
                     modifier = Modifier
-                        .background(Color(0x66000000), CircleShape)
+                        .size(36.dp)
+                        .background(Color(0x77000000), CircleShape)
                         .testTag("edit_lyrics_button")
                 ) {
                     Icon(
-                        Icons.Default.Edit,
-                        contentDescription = "Edit Lyrics",
-                        tint = SpotifyTextPrimary
+                        imageVector = Icons.Default.Edit,
+                        contentDescription = "Edit Text",
+                        tint = SpotifyTextPrimary,
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }
         }
     }
 
-    // Manual Lyrics Editor Modal
-    if (showEditDialog) {
+    // Stage 4: In-App Tap-to-Sync Editor View
+    if (showTapSyncEditor) {
+        ManualLrcSyncEditorView(
+            song = song,
+            currentPositionMs = currentPositionMs,
+            isPlaying = isPlaying,
+            onPlayPause = onPlayPause,
+            onSeekTo = onSeekTo,
+            onDismiss = { showTapSyncEditor = false },
+            onSaveLyrics = { lrcText, isSynced ->
+                onSaveLyrics(lrcText, isSynced)
+                showTapSyncEditor = false
+            }
+        )
+    }
+
+    // Manual Text Editor Modal Dialog
+    if (showTextEditDialog) {
         LyricsEditorDialog(
             initialLyrics = song?.lyrics ?: "",
             durationMs = song?.durationMs ?: 180000L,
-            onDismiss = { showEditDialog = false },
+            onDismiss = { showTextEditDialog = false },
             onSave = { updatedText ->
                 val hasTimestamps = updatedText.contains(Regex("\\[\\d{1,2}:\\d{2}"))
                 val finalLyrics = if (hasTimestamps) {
@@ -324,7 +406,7 @@ fun SyncedLyricsView(
                     LyricsParser.generateTimedLrc(updatedText, song?.durationMs ?: 180000L)
                 }
                 onSaveLyrics(finalLyrics, true)
-                showEditDialog = false
+                showTextEditDialog = false
             }
         )
     }
@@ -426,7 +508,7 @@ fun LyricsEditorDialog(
                     ) {
                         Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = SpotifyGreen, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Auto-Sync", color = SpotifyGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text("Auto-Distribute", color = SpotifyGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
 
                     Row(verticalAlignment = Alignment.CenterVertically) {

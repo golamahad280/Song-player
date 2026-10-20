@@ -422,7 +422,7 @@ class PlayerManager private constructor(private val context: Context) :
                 try {
                     val pos = mediaPlayer?.let {
                         if (it.isPlaying) it.currentPosition.toLong() else null
-                    } ?: (_currentPositionMs.value + 200L)
+                    } ?: (_currentPositionMs.value + 100L)
 
                     _currentPositionMs.value = pos
 
@@ -432,9 +432,9 @@ class PlayerManager private constructor(private val context: Context) :
                         break
                     }
                 } catch (_: Exception) {
-                    _currentPositionMs.value += 200L
+                    _currentPositionMs.value += 100L
                 }
-                delay(200)
+                delay(100)
             }
         }
     }
